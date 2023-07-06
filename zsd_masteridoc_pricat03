@@ -1,0 +1,3601 @@
+FUNCTION zsd_masteridoc_pricat03.
+*"----------------------------------------------------------------------
+*"*"Interface locale :
+*"  IMPORTING
+*"     REFERENCE(IT_PRICAT_WRSZ) TYPE  ZSD_WRSZ
+*"     REFERENCE(IT_PRICAT_WLK1) TYPE  ZSD_WLK1
+*"     REFERENCE(LV_PROFIL) TYPE  PRIPRF
+*"     REFERENCE(LV_SYNTAX_ID) TYPE  PRISYNTAX
+*"     REFERENCE(LV_SYNTAX_VERSION) TYPE  PRISYNVER
+*"     REFERENCE(LV_PASSWORD) TYPE  PRIPASSW
+*"     REFERENCE(LV_ILN_PARTY) TYPE  PRIPARTY
+*"     REFERENCE(LV_RCVPOR) TYPE  EDI_RCVPOR
+*"     REFERENCE(LV_RCVPRN) TYPE  EDI_RCVPRN
+*"     REFERENCE(LV_RCVPRT) TYPE  EDI_RCVPRT
+*"     REFERENCE(LV_RCVPFC) TYPE  EDI_RCVPFC
+*"     REFERENCE(LV_SNDPOR) TYPE  EDI_SNDPOR
+*"     REFERENCE(LV_SNDPRN) TYPE  EDI_SNDPRN
+*"     REFERENCE(LV_SNDPRT) TYPE  EDI_SNDPRT
+*"     REFERENCE(LV_SNDPFC) TYPE  EDI_SNDPFC
+*"     REFERENCE(LV_XMLCSV) TYPE  FLAG
+*"     REFERENCE(LV_EMAIL) TYPE  ZSD_RECEIVERS OPTIONAL
+*"     REFERENCE(LV_CORPS) TYPE  SO_TEXT255 OPTIONAL
+*"     REFERENCE(LV_DESC_ATT) TYPE  SO_OBJ_DES OPTIONAL
+*"     REFERENCE(LV_OBJET) TYPE  SO_OBJ_DES OPTIONAL
+*"     REFERENCE(IT_CORPS) TYPE  SOLI_TAB
+*"     REFERENCE(LV_MAXSPLIT) TYPE  NUM6
+*"     VALUE(IV_CSV_REMOVE_DOUBLE_QUOTE) TYPE  ABAP_BOOL DEFAULT 'X'
+*"----------------------------------------------------------------------
+* Juillet 2021 : Jira 4937 enlever le caractère double-quote dans le fichier
+*                csv attaché à l'email envoyé (IV_CSV_REMOVE_DOUBLE_QUOTE)
+*                - retour arrière version projet SUBSTITUTION (DEVK904376)
+*                - ajout modif TMA (caractère double quote dans le fichier
+*                  csv du mail)
+* 27/08/2021   : Caractère spécial de SAP (ITF -> ASCII) '<(>&<)>'
+*                voir la note OSS 277603
+* "idoc text segment: two consecutive comas ',,' are showed as ',<(>,<)>'
+*
+*                + bug f_idoc_header peut être vide à l'appel de
+*                  MASTER_IDOC_DISTRIBUTE
+* 14/06/2022   : bug 18 articles +  XMLCSV=X + MAXSPLIT=4
+*                il manque des segments dans ce cas de test par exemple
+*                IZ-5141
+
+************************************************************************
+* Historique de révision
+************************************************************************
+*&---------------------------------------------------------------------*
+*& Auteur        | Date de ch.  | Référence, description
+*&---------------------------------------------------------------------*
+*& SAVANGY       | 27/09/2022   | IZ-5202 :
+*&                                Désactivation envoi FTP INT014d
+*&                                Réf.: SAVANGY_IZ-5202
+*&---------------------------------------------------------------------*
+
+
+  TYPES :
+    BEGIN OF ls_unitofmeasureext,
+      uom0(1) TYPE c,
+      uom1(3) TYPE c,
+    END OF ls_unitofmeasureext,
+
+    BEGIN OF ls_listoftable,
+      code  TYPE kotabnr,
+      field TYPE fieldname,
+      name  TYPE tabname,
+    END OF ls_listoftable,
+
+    BEGIN OF ls_typecondition,
+      seq  TYPE t685-kozgf,
+      code TYPE t685-kschl,
+    END OF ls_typecondition,
+
+    BEGIN OF ls_condvente,
+      numero    TYPE knumh,
+      type_cond TYPE kschl,  "
+    END OF ls_condvente.
+
+
+
+  DATA :
+    ls_idoc_contrl    TYPE edidc,
+    ls_idoc_data      TYPE edidd,
+    ls_newidoc_data   TYPE edidd,
+    ls_listoftable    TYPE ls_listoftable,
+    ls_pit_conditions TYPE  vkkacondit,
+    ls_konh           TYPE konh,
+    ls_idoc_komg      TYPE komg,
+    ls_idoc_zkomg     TYPE zkomg,
+    ls_idoc_zkonh     TYPE zkonh,
+    ls_idoc_zkonp     TYPE zkonp,
+    ls_idoc_zkonm     TYPE zkonm,
+    ls_idoc_zkonw     TYPE zkonw,
+    lv_segnum         TYPE idocdsgnum,
+    lv_segnum_newidoc TYPE idocdsgnum,
+    ls_e1prpro        TYPE e1prpro,
+    ls_e1prihead      TYPE e1prihead,
+    ls_e1pruni        TYPE e1pruni,
+    ls_e1edk02        TYPE e1edk02,
+    ls_e1adrm1        TYPE e1adrm1,
+    ls_e1adre1        TYPE e1adre1,
+    ls_e1edk17        TYPE e1edk17,
+    ls_e1edk23        TYPE e1edk23,
+    ls_e1wsohm        TYPE e1wsohm,
+    ls_e1wsotm        TYPE e1wsotm,
+    ls_e1maram        TYPE e1maram,
+    ls_e1mara1        TYPE e1mara1,
+    ls_e1marcm        TYPE e1marcm,
+    ls_e1marc1        TYPE e1marc1,
+    ls_e1pmarm        TYPE e1pmarm,
+    ls_e1marmm        TYPE e1marmm,
+    ls_e1maktm        TYPE e1maktm,
+    ls_e1bpe1mamtrt   TYPE e1bpe1mamtrt,
+    ls_e1mtxhm        TYPE e1mtxhm,
+    ls_e1mtxlm        TYPE e1mtxlm,
+    ls_e1meanm        TYPE e1meanm,
+    ls_e1pkomg        TYPE e1pkomg,
+    ls_e1konh         TYPE e1konh,
+    ls_e1konp         TYPE e1konp,
+    ls_e1konm         TYPE e1konm,
+    ls_e1konw         TYPE e1konw,
+    ls_e1eds01        TYPE e1eds01,
+    ls_e1priausp      TYPE e1priausp,
+    ls_ze1priausp     TYPE ze1priausp,
+    ls_adresse        LIKE vbadr.
+
+**IZ-4645 : ajout d'un segment ZE1WBB13
+  DATA : ls_ze1wbb13 TYPE ze1wbb13,
+         ls_konp     TYPE konp.
+**fin IZ-4645
+  DATA :
+    lt_csv_file           TYPE TABLE OF string,
+    lt_idoc_contrl        TYPE TABLE OF edidc,
+    lt_idoc_data_temp     TYPE TABLE OF edidd,
+*    lt_idoc_data_head     TYPE TABLE OF edidd, "IZ-5141 -
+    lt_idoc_data          TYPE TABLE OF edidd,
+    lt_beforee1wsohm      TYPE TABLE OF edidd,
+    lt_newidoc_data       TYPE TABLE OF edidd,
+    lt_idoc_mara          TYPE TABLE OF edidd,
+    lt_idoc_status        TYPE STANDARD TABLE OF bdidocstat,
+    lt_return_variables   TYPE STANDARD TABLE OF bdwfretvar,
+    lt_serialization_info TYPE STANDARD TABLE OF bdi_ser,
+    lt_unitofmeasureext   TYPE STANDARD TABLE OF ls_unitofmeasureext,
+    lt_wsoh               LIKE wsoh,
+    lt_wsot               LIKE wsot OCCURS 0 WITH HEADER LINE,
+    lt_listoftable        TYPE TABLE OF ls_listoftable,
+    lt_typecondition      TYPE TABLE OF ls_typecondition,
+    lt_condvente          TYPE TABLE OF ls_condvente,
+    lt_currentvente       TYPE TABLE OF ls_condvente,
+    lt_pit_conditions     TYPE TABLE OF vkkacondit,
+    lt_temp_konh          TYPE TABLE OF konh,
+    lt_temp_konp          TYPE TABLE OF konp,
+    lt_temp_konm          TYPE TABLE OF konm,
+    lt_temp_konw          TYPE TABLE OF konw,
+    lt_idoc_e1konh        TYPE STANDARD TABLE OF e1konh,
+    lt_idoc_e1konp        TYPE STANDARD TABLE OF e1konp,
+    lt_idoc_e1konm        TYPE STANDARD TABLE OF e1konm,
+    lt_idoc_e1konw        TYPE STANDARD TABLE OF e1konw,
+    lt_exp_valu_ass       TYPE TABLE OF api_vali,
+    lt_exp_valu_ass2      TYPE TABLE OF api_vali,
+    lt_exp_valu           TYPE TABLE OF api_vali,
+    lt_docnum             LIKE edidc OCCURS 0 WITH HEADER LINE,
+    lt_tpar               LIKE tpar.
+
+  DATA :
+    lv_sequencevente      TYPE kozgf,
+    lv_countcondition     TYPE sy-tabix,
+    lv_counttable         TYPE sy-tabix,
+    lv_lecturetable       TYPE i,
+    lv_lecturecondition   TYPE i,
+    lv_idcondvente        TYPE knumh,
+    lv_selectfrom         TYPE dd03l-tabname,
+    lv_controlevrkme      TYPE fieldname,
+    lv_lastrecord         TYPE sy-tabix,
+    lv_savelastrecord     TYPE sy-tabix,
+    lv_produit            TYPE tdobname,
+    lv_pltyp              TYPE knvv-pltyp,
+    lv_firstletter        TYPE char1,
+    lv_flaginsert_e1pkomg TYPE boolean,
+    lv_flaginsert_e1konh  TYPE boolean,
+    lv_flaginsert_e1konp  TYPE boolean,
+    lv_flaginsert_e1konm  TYPE boolean,
+    lv_flaginsert_e1konw  TYPE boolean,
+    lv_index              TYPE i,
+*    lv_firstpass          TYPE boolean, "IZ-5141 -
+    lv_groupkunnr         TYPE kunnr,
+    lv_oksegm_8           TYPE boolean,
+    lv_oksegm_81          TYPE boolean,
+    lv_oksegm_12          TYPE boolean,
+    lv_max_index          TYPE sy-tabix,
+    lv_count_e1wsohm      TYPE sy-tabix,
+    lv_currentursac       TYPE wlk1-ursac,
+    lv_idoccount          TYPE i,
+*    lv_countmatnr         TYPE i,       "IZ-5141 -
+    lv_addr1_sel          TYPE addr1_sel,
+    lv_addr1_val          LIKE addr1_val,
+    lv_qual               TYPE sy-tabix,
+    lv_inco1              TYPE knvv-inco1,
+    lv_nrart              LIKE vbpad-nrart,
+    lv_count_split        TYPE i,
+    lv_count_occurs       TYPE i,
+    lv_nbr_art            TYPE i.
+
+  DATA:
+    lo_cond_vakey_srv TYPE REF TO cl_cond_vakey_srv,
+    o_cx_ref          TYPE REF TO cx_cond_vakey,
+    lv_vakey100       TYPE vakey,
+    ls_vakey_vadat    TYPE cl_cond_vakey_srv=>ty_gs_vakey_vadat.
+
+
+  DATA : lv_stawn           TYPE marc-stawn,
+         lv_stringtoprocess TYPE string.
+
+  FIELD-SYMBOLS :
+    <fs_wrsz_1st> LIKE wrsz.
+
+  READ TABLE it_pricat_wrsz ASSIGNING <fs_wrsz_1st> INDEX 1.
+
+* Segment en-tete
+  CLEAR ls_idoc_data.
+
+**
+**              SEGMENT E1PRPRO
+**
+  ls_idoc_data-docnum    = ls_idoc_contrl-docnum.
+  lv_segnum = lv_segnum + 1.
+  ls_idoc_data-segnum    = lv_segnum.
+  ls_idoc_data-mandt     = sy-mandt.
+  ls_idoc_data-segnam    = 'E1PRPRO'.
+
+  ls_e1prpro-profil = lv_profil.
+  MOVE ls_e1prpro TO ls_idoc_data-sdata.
+  APPEND ls_idoc_data TO lt_idoc_data.
+
+
+**
+**              SEGMENT E1PRIHEAD
+**
+  lv_segnum = lv_segnum + 1.
+  ls_idoc_data-segnum    = lv_segnum.
+  ls_idoc_data-mandt     = sy-mandt.
+  ls_idoc_data-segnam    = 'E1PRIHEAD'.
+
+  ls_e1prihead-syntax_ident = lv_syntax_id.
+  ls_e1prihead-syntax_version = lv_syntax_version.
+  ls_e1prihead-password_recip = lv_password.
+  ls_e1prihead-iln_party_id = lv_iln_party.
+  MOVE ls_e1prihead TO ls_idoc_data-sdata.
+  APPEND ls_idoc_data TO lt_idoc_data.
+
+
+**
+**              SEGMENT E1PRUNI
+**
+* Unité quantité
+  SELECT value, value && '01'
+    INTO TABLE @lt_unitofmeasureext
+    FROM zparam_izisap
+    WHERE idparam IN ('UNIT','UNIT_COU','UNIT_PAL').
+
+  SELECT a~msehi AS uom, b~msehl AS descr
+    FROM t006 AS a
+    INNER JOIN t006a AS b
+    ON a~msehi = b~msehi
+    INTO TABLE @DATA(lt_unitofmeasuresap)
+    FOR ALL ENTRIES IN @lt_unitofmeasureext
+    WHERE a~isocode = @lt_unitofmeasureext-uom1.
+
+  LOOP AT lt_unitofmeasuresap
+    ASSIGNING FIELD-SYMBOL(<fs_unitofmeasuresap>).
+    lv_segnum = lv_segnum + 1.
+    ls_idoc_data-segnum    = lv_segnum.
+    ls_idoc_data-mandt     = sy-mandt.
+    ls_idoc_data-segnam    = 'E1PRUNI'.
+
+    ls_e1pruni-pcode_1  = <fs_unitofmeasuresap>-uom(1).
+    ls_e1pruni-meinh    = <fs_unitofmeasuresap>-uom.
+    ls_e1pruni-pcode_2  = <fs_unitofmeasuresap>-descr.
+    MOVE ls_e1pruni TO ls_idoc_data-sdata.
+    APPEND ls_idoc_data TO lt_idoc_data.
+  ENDLOOP.
+**
+**              SEGMENT E1EDK02
+**
+* Données de référence
+  lv_segnum = lv_segnum + 1.
+  ls_idoc_data-segnum    = lv_segnum.
+  ls_idoc_data-mandt     = sy-mandt.
+  ls_idoc_data-segnam    = 'E1EDK02'.
+
+  ls_e1edk02-belnr = <fs_wrsz_1st>-asort.
+  MOVE ls_e1edk02 TO ls_idoc_data-sdata.
+  APPEND ls_idoc_data TO lt_idoc_data.
+**
+**              SEGMENT E1ADRM1 - TARGET
+**
+* Données d'adresse
+  lv_segnum = lv_segnum + 1.
+  ls_idoc_data-segnum    = lv_segnum.
+  ls_idoc_data-mandt     = sy-mandt.
+  ls_idoc_data-segnam    = 'E1ADRM1'.
+
+  SELECT SINGLE adrnr
+    INTO lv_addr1_sel
+    FROM tvko
+    WHERE vkorg = <fs_wrsz_1st>-vkorg.
+  IF ( sy-subrc IS INITIAL AND
+       lv_addr1_sel IS NOT INITIAL ).
+    lv_addr1_sel-addrnumber = lv_addr1_sel.
+    CALL FUNCTION 'ADDR_GET'
+      EXPORTING
+        address_selection = lv_addr1_sel
+        address_group     = 'CA01'
+      IMPORTING
+        address_value     = lv_addr1_val
+      EXCEPTIONS
+        parameter_error   = 1
+        address_not_exist = 2
+        version_not_exist = 3
+        internal_error    = 4
+        OTHERS            = 5.
+    IF ( sy-subrc IS INITIAL ).
+      ls_e1adrm1-partner_q    = 'FR '.
+      ls_e1adrm1-partner_id   = <fs_wrsz_1st>-vkorg.
+      ls_e1adrm1-jurisdic     = lv_addr1_val-taxjurcode.
+      ls_e1adrm1-name1        = lv_addr1_val-name1.
+      ls_e1adrm1-name2        = lv_addr1_val-name2.
+      ls_e1adrm1-name3        = lv_addr1_val-name3.
+      ls_e1adrm1-name4        = lv_addr1_val-name4.
+      ls_e1adrm1-name_co      = lv_addr1_val-name_co.
+      ls_e1adrm1-location     = lv_addr1_val-location.
+      ls_e1adrm1-building     = lv_addr1_val-building.
+      ls_e1adrm1-floor        = lv_addr1_val-floor.
+      ls_e1adrm1-room         = lv_addr1_val-roomnumber.
+      ls_e1adrm1-street1      = lv_addr1_val-street.
+      ls_e1adrm1-street2      = lv_addr1_val-streetcode.
+      ls_e1adrm1-street3      = lv_addr1_val-streetabbr.
+      ls_e1adrm1-house_supl   = lv_addr1_val-house_num1.
+      ls_e1adrm1-house_rang   = lv_addr1_val-house_num3.
+      ls_e1adrm1-postl_cod1   = lv_addr1_val-post_code1.
+      ls_e1adrm1-postl_cod3   = lv_addr1_val-post_code3.
+      ls_e1adrm1-postl_area   = lv_addr1_val-postalarea.
+      ls_e1adrm1-city1        = lv_addr1_val-city1.
+      ls_e1adrm1-city2        = lv_addr1_val-city2.
+      ls_e1adrm1-postl_pbox   = lv_addr1_val-po_box.
+      ls_e1adrm1-postl_cod2   = lv_addr1_val-post_code2.
+      ls_e1adrm1-postl_city   = lv_addr1_val-po_box_loc.
+      ls_e1adrm1-telephone1   = lv_addr1_val-tel_number.
+      ls_e1adrm1-telephone2   = lv_addr1_val-tel_extens.
+      ls_e1adrm1-telefax      = lv_addr1_val-fax_number.
+      ls_e1adrm1-region       = lv_addr1_val-region.
+
+      PERFORM conv_ctry_sap_to_iso  USING lv_addr1_val-country
+                                          ls_e1adrm1-country1.
+
+      PERFORM conv_langu_sap_to_iso USING lv_addr1_val-langu
+                                          ls_e1adrm1-language.
+    ENDIF.
+    MOVE ls_e1adrm1 TO ls_idoc_data-sdata.
+    APPEND ls_idoc_data TO lt_idoc_data.
+  ENDIF.
+
+**
+**              SEGMENT E1ADRE1
+**
+
+* Données d'adresse
+  lv_segnum = lv_segnum + 1.
+  ls_idoc_data-segnum    = lv_segnum.
+  ls_idoc_data-mandt     = sy-mandt.
+  ls_idoc_data-segnam    = 'E1ADRE1'.
+
+  ls_e1adre1-extend_q = '100'.
+  ls_e1adre1-extend_d = lv_iln_party.
+  MOVE ls_e1adre1 TO ls_idoc_data-sdata.
+  APPEND ls_idoc_data TO lt_idoc_data.
+
+  LOOP AT it_pricat_wrsz INTO DATA(dt_pricat_e1adre1)
+    GROUP BY dt_pricat_e1adre1-kunnr
+    INTO DATA(key_e1adre1).
+    LOOP AT GROUP key_e1adre1 ASSIGNING FIELD-SYMBOL(<mb_e1adre1>).
+      SELECT SINGLE locco, bbbnr, bbsnr, bubkz
+        INTO @DATA(dt_kna1)
+        FROM kna1
+        WHERE kunnr = @<mb_e1adre1>-kunnr.
+      IF ( sy-subrc IS INITIAL AND
+         lv_groupkunnr NE <mb_e1adre1>-kunnr ).
+
+        lv_groupkunnr = <mb_e1adre1>-kunnr.
+        CALL FUNCTION 'VIEW_VBADR'
+          EXPORTING
+            nrart         = lv_rcvprt
+            partnernummer = <mb_e1adre1>-kunnr
+          IMPORTING
+            adresse       = ls_adresse
+            tpar_wa       = lt_tpar.
+
+        ls_e1adrm1-partner_q    = 'MR '.
+        ls_e1adrm1-address_t    = ls_adresse-address_type.
+        ls_e1adrm1-partner_id   = <mb_e1adre1>-kunnr.
+        ls_e1adrm1-jurisdic     = ls_adresse-txjcd.
+        ls_e1adrm1-formofaddr   = ls_adresse-anred.
+        ls_e1adrm1-name1        = ls_adresse-name1.
+        ls_e1adrm1-name2        = ls_adresse-name2.
+        ls_e1adrm1-name3        = ls_adresse-name3.
+        ls_e1adrm1-name4        = ls_adresse-name4.
+        ls_e1adrm1-street1      = ls_adresse-stras.
+        ls_e1adrm1-postl_cod1   = ls_adresse-pstlz.
+        ls_e1adrm1-postl_cod2   = ls_adresse-pstl2.
+        ls_e1adrm1-city1        = ls_adresse-ort01.
+        ls_e1adrm1-city2        = ls_adresse-ort02.
+        ls_e1adrm1-postl_pbox   = ls_adresse-pfach.
+        ls_e1adrm1-postl_city   = ls_adresse-pfort.
+        ls_e1adrm1-telephone1   = ls_adresse-telf1.
+        ls_e1adrm1-telephone2   = ls_adresse-telf2.
+        ls_e1adrm1-telefax      = ls_adresse-telfx.
+        ls_e1adrm1-telex        = ls_adresse-telx1.
+        ls_e1adrm1-region       = ls_adresse-regio.
+        ls_e1adrm1-county_cod   = ls_adresse-counc.
+        PERFORM conv_ctry_sap_to_iso  USING ls_adresse-land1
+                                            ls_e1adrm1-country1.
+        PERFORM conv_langu_sap_to_iso USING ls_adresse-spras
+                                            ls_e1adrm1-language.
+
+
+        lv_segnum = lv_segnum + 1.
+        ls_idoc_data-segnum    = lv_segnum.
+        ls_idoc_data-mandt     = sy-mandt.
+        ls_idoc_data-segnam    = 'E1ADRM1'.
+*        ls_e1adrm1-name1 = <fs_wrsz_1st>-vkorg.
+        MOVE ls_e1adrm1 TO ls_idoc_data-sdata.
+        APPEND ls_idoc_data TO lt_idoc_data.
+
+        IF ( NOT dt_kna1-locco IS INITIAL ).
+          lv_segnum = lv_segnum + 1.
+          ls_idoc_data-segnum    = lv_segnum.
+          ls_idoc_data-mandt     = sy-mandt.
+          ls_idoc_data-segnam    = 'E1ADRE1'.
+
+          ls_e1adre1-extend_q = '303'.
+          ls_e1adre1-extend_d = dt_kna1-locco.
+          MOVE ls_e1adre1 TO ls_idoc_data-sdata.
+          APPEND ls_idoc_data TO lt_idoc_data.
+
+        ENDIF.
+
+        lv_segnum = lv_segnum + 1.
+        ls_idoc_data-segnum    = lv_segnum.
+        ls_idoc_data-mandt     = sy-mandt.
+        ls_idoc_data-segnam    = 'E1ADRE1'.
+
+        ls_e1adre1-extend_q = '100'.
+        ls_e1adre1-extend_d = dt_kna1-bbbnr && dt_kna1-bbsnr && dt_kna1-bubkz.
+        MOVE ls_e1adre1 TO ls_idoc_data-sdata.
+        APPEND ls_idoc_data TO lt_idoc_data.
+      ENDIF.
+    ENDLOOP.
+  ENDLOOP.
+**
+**              SEGMENT E1EDK17
+**
+  SELECT SINGLE inco1
+    INTO lv_inco1
+    FROM knvv
+    WHERE kunnr = <fs_wrsz_1st>-kunnr
+    AND vkorg   = <fs_wrsz_1st>-vkorg
+    AND vtweg   = <fs_wrsz_1st>-vtweg
+    AND spart   = <fs_wrsz_1st>-spart.
+
+  IF ( sy-subrc IS INITIAL AND
+       NOT lv_inco1 IS INITIAL ).
+    SELECT SINGLE inco1, bezei
+      INTO @DATA(dt_tinct)
+      FROM tinct
+      WHERE spras = @sy-langu
+      AND inco1 = @lv_inco1.
+    IF ( sy-subrc IS INITIAL ).
+      lv_segnum = lv_segnum + 1.
+      ls_idoc_data-segnum = lv_segnum.
+      ls_idoc_data-mandt  = sy-mandt.
+      ls_idoc_data-segnam = 'E1EDK17'.
+
+      ls_e1edk17-qualf  = '001'.
+      ls_e1edk17-lkond  = lv_inco1.
+      ls_e1edk17-lktext = dt_tinct-bezei.
+      MOVE ls_e1edk17 TO ls_idoc_data-sdata.
+
+      APPEND ls_idoc_data TO lt_idoc_data.
+    ENDIF.
+
+    SELECT *
+      INTO TABLE @DATA(dt_trsco_inco)
+      FROM zsd_trsco_inco
+      WHERE kunnr = @<fs_wrsz_1st>-kunnr.
+
+    IF ( sy-subrc IS INITIAL AND
+      NOT dt_trsco_inco IS INITIAL ).
+      LOOP AT dt_trsco_inco ASSIGNING FIELD-SYMBOL(<fs_transco_incoterm>).
+        lv_segnum = lv_segnum + 1.
+        ls_idoc_data-segnum = lv_segnum.
+        ls_idoc_data-mandt  = sy-mandt.
+        ls_idoc_data-segnam = 'E1EDK17'.
+
+        lv_qual = sy-tabix + 1 .
+        ls_e1edk17-qualf  = '00' && lv_qual.
+        ls_e1edk17-lkond  = <fs_transco_incoterm>-inco1.
+        ls_e1edk17-lktext = <fs_transco_incoterm>-inco2_l.
+
+        MOVE ls_e1edk17 TO ls_idoc_data-sdata.
+        APPEND ls_idoc_data TO lt_idoc_data.
+      ENDLOOP.
+    ENDIF.
+  ENDIF.
+
+**
+**              SEGMENT E1EDK23
+**
+  SELECT SINGLE waers
+    INTO @DATA(lv_tvko_waers)
+    FROM tvko
+    WHERE vkorg = @<fs_wrsz_1st>-vkorg.
+  IF ( sy-subrc IS INITIAL AND
+    NOT lv_tvko_waers IS INITIAL ).
+    lv_segnum = lv_segnum + 1.
+    ls_idoc_data-segnum    = lv_segnum.
+    ls_idoc_data-mandt     = sy-mandt.
+    ls_idoc_data-segnam    = 'E1EDK23'.
+
+    ls_e1edk23-qualf = '002'.
+    ls_e1edk23-waerq = lv_tvko_waers.
+    MOVE ls_e1edk23 TO ls_idoc_data-sdata.
+    APPEND ls_idoc_data TO lt_idoc_data.
+  ENDIF.
+
+  SELECT SINGLE waers
+    INTO @DATA(lv_knvv_waers)
+    FROM knvv
+    WHERE kunnr =  @<fs_wrsz_1st>-kunnr
+    AND   vkorg =  @<fs_wrsz_1st>-vkorg
+    AND   vtweg =  @<fs_wrsz_1st>-vtweg
+    AND   spart =  @<fs_wrsz_1st>-spart.
+  IF ( sy-subrc IS INITIAL AND
+    NOT lv_knvv_waers IS INITIAL ).
+    lv_segnum = lv_segnum + 1.
+    ls_idoc_data-segnum    = lv_segnum.
+    ls_idoc_data-mandt     = sy-mandt.
+    ls_idoc_data-segnam    = 'E1EDK23'.
+
+    ls_e1edk23-qualf = '004'.
+    ls_e1edk23-waerz = lv_knvv_waers.
+    MOVE ls_e1edk23 TO ls_idoc_data-sdata.
+    APPEND ls_idoc_data TO lt_idoc_data.
+  ENDIF.
+** COPY header for duplicating case E1WSOHM count > 9999 multiple IDOC
+  lv_segnum_newidoc = lv_segnum.
+  lt_beforee1wsohm[] = lt_idoc_data.
+**              SEGMENT E1SOHM / E1SOHM
+**
+  LOOP AT it_pricat_wrsz ASSIGNING FIELD-SYMBOL(<fs_pricat_wrsz>).
+*    lv_firstpass = abap_false.
+
+
+    IF ( lt_listoftable IS INITIAL ).
+      DO 2 TIMES.
+        lv_sequencevente = COND text4(
+         WHEN sy-index = 1  THEN 'ZPR0'    " vente entrepôt
+         WHEN sy-index = 2  THEN 'ZDIR'    " vente directe
+        ).
+
+        " enregistre ensemble types de condition
+        SELECT kozgf kschl
+          APPENDING TABLE lt_typecondition
+          FROM t685
+          WHERE kozgf = lv_sequencevente.
+        IF ( sy-subrc IS INITIAL ).
+          DESCRIBE TABLE lt_typecondition LINES lv_countcondition.
+        ENDIF.
+
+        " recherche liste tables de données
+        SELECT kotabnr
+          APPENDING  TABLE lt_listoftable
+          FROM t682i
+          WHERE kozgf = lv_sequencevente.
+        IF ( sy-subrc IS INITIAL ).
+          SORT lt_listoftable BY code.
+          DESCRIBE TABLE lt_listoftable LINES lv_counttable.
+        ENDIF.
+
+        " recherche conditions de vente dans tables A*
+        CLEAR lv_lecturetable.
+        CLEAR lt_condvente.
+        DO lv_counttable TIMES.                       " loop sur table A*
+          lv_lecturetable = lv_lecturetable + 1.
+          CLEAR lv_lecturecondition.
+          READ TABLE lt_listoftable
+            ASSIGNING FIELD-SYMBOL(<fs_table>)
+            INDEX lv_lecturetable.
+          IF ( sy-subrc = 0 ).
+            CLEAR lv_idcondvente.
+            CLEAR lt_currentvente.
+            CONCATENATE 'A' <fs_table>-code INTO lv_selectfrom.
+            " controle table paramétrée contient le champ vrkme -> select
+            SELECT SINGLE fieldname
+              INTO  lv_controlevrkme
+              FROM dd03l
+              WHERE tabname = lv_selectfrom
+              AND  fieldname = 'PLTYP'.
+            IF ( sy-subrc IS INITIAL ).
+              SELECT SINGLE fieldname
+                INTO  lv_controlevrkme
+                FROM dd03l
+                WHERE tabname = lv_selectfrom
+                AND  fieldname = 'VRKME'.
+              IF ( sy-subrc = 0 ).
+                <fs_table>-field = 'VRKME'.
+              ELSE.
+                <fs_table>-field = ''.
+              ENDIF.
+            ELSE.
+              <fs_table>-field = 'NOPLTYP'.
+            ENDIF.
+            <fs_table>-name = lv_selectfrom.
+          ENDIF.
+        ENDDO.
+      ENDDO.
+      DELETE lt_listoftable WHERE field = 'NOPLTYP'.
+
+    ENDIF.
+
+    SORT lt_listoftable BY code.
+
+    DELETE ADJACENT DUPLICATES FROM lt_listoftable COMPARING code.
+
+    SELECT SINGLE pltyp
+               INTO lv_pltyp
+               FROM knvv
+               WHERE kunnr = <fs_pricat_wrsz>-kunnr
+               AND vkorg = <fs_pricat_wrsz>-vkorg
+               AND vtweg = <fs_pricat_wrsz>-vtweg
+               AND spart = <fs_pricat_wrsz>-spart.
+
+    DATA lv_lang TYPE sy-langu.
+    lv_lang = 'E'.
+    SELECT SINGLE spras
+      INTO lv_lang
+      FROM kna1
+      WHERE kunnr = <fs_pricat_wrsz>-kunnr.
+
+*    lt_idoc_data_head = lt_idoc_data."IZ-5141 -
+    DESCRIBE TABLE it_pricat_wlk1 LINES lv_nbr_art.
+    LOOP AT it_pricat_wlk1 ASSIGNING FIELD-SYMBOL(<fs_wsoh>) WHERE filia = <fs_pricat_wrsz>-asort.
+      lv_count_split = lv_count_split + 1.
+      lv_count_occurs = sy-tabix.
+
+      IF lv_count_split = 1.
+*        lt_idoc_data_temp = lt_idoc_data_head.    "IZ-5141 -
+        lt_idoc_data_temp = lt_beforee1wsohm.      "IZ-5141 +
+      ENDIF.
+
+
+*      lv_countmatnr = lv_countmatnr + 1.
+*      IF ( lv_currentursac NE <fs_wsoh>-ursac ).   "IZ-5141 -
+      IF ( lv_currentursac NE <fs_wsoh>-ursac )     "IZ-5141 +
+      OR  lv_count_split = 1.                       "IZ-5141 +
+        lv_currentursac = <fs_wsoh>-ursac.
+        lv_count_e1wsohm = lv_count_e1wsohm + 1.
+
+        CALL FUNCTION 'WSOH_SINGLE_READ'
+          EXPORTING
+            skopf          = <fs_wsoh>-ursac
+          IMPORTING
+            ewsoh          = lt_wsoh
+          EXCEPTIONS
+            key_uncomplete = 1
+            rec_enqueued   = 2
+            no_rec_found   = 3
+            OTHERS         = 4.
+
+        IF ( sy-subrc IS INITIAL ).
+          t_e1wsohm-msgfn = '005'.
+          MOVE-CORRESPONDING lt_wsoh TO ls_e1wsohm.
+          lv_segnum = lv_segnum + 1.
+          ls_idoc_data-segnum    = lv_segnum.
+          ls_idoc_data-mandt     = sy-mandt.
+          ls_idoc_data-segnam    = 'E1WSOHM'.
+
+          MOVE ls_e1wsohm TO ls_idoc_data-sdata.
+          APPEND ls_idoc_data TO lt_idoc_data.
+          APPEND ls_idoc_data TO lt_idoc_data_temp. "Split idoc
+
+          CALL FUNCTION 'WSOT_READ'
+            EXPORTING
+              skopf          = <fs_wsoh>-ursac
+            TABLES
+              twsot          = lt_wsot
+            EXCEPTIONS
+              key_uncomplete = 1
+              no_rec_found   = 2
+              OTHERS         = 3.
+
+          LOOP AT lt_wsot.
+            t_e1wsotm_plus-msgfn = '005'.
+            t_e1wsotm_plus-skopf = <fs_wsoh>-ursac.
+            MOVE-CORRESPONDING lt_wsot TO t_e1wsotm_plus.
+
+            lv_segnum           = lv_segnum + 1.
+            ls_idoc_data-segnum = lv_segnum.
+            ls_idoc_data-mandt  = sy-mandt.
+            ls_idoc_data-segnam = 'E1WSOTM'.
+            MOVE t_e1wsotm_plus TO ls_idoc_data-sdata.
+            APPEND ls_idoc_data TO lt_idoc_data.
+            APPEND ls_idoc_data TO lt_idoc_data_temp. "Split idoc
+          ENDLOOP.
+        ENDIF.
+      ENDIF.
+
+      REFRESH : t_marakey.
+      t_marakey-mandt = sy-mandt.
+      t_marakey-matnr = <fs_wsoh>-strnr.
+      APPEND t_marakey.
+
+      CALL FUNCTION 'MASTERIDOC_CREATE_REQ_MATMAS'
+        EXPORTING
+          rcvpfc                      = ''
+          rcvprn                      = ''
+          rcvprt                      = ''
+          sndpfc                      = ''
+          sndprn                      = ''
+          sndprt                      = ''
+          message_type                = c_matmas
+          flag_testmode               = c_true
+          suppress_progress_indicator = c_true
+          check_mat                   = c_false
+        TABLES
+          marakey                     = t_marakey
+        EXCEPTIONS
+          OTHERS                      = 1.
+
+*       Import Key data from memory
+      IF ( sy-subrc IS INITIAL ).
+        IMPORT f_marakey
+               t_maktkey
+               t_marckey
+               t_marmkey
+               t_meankey
+               t_mvkekey
+               t_mlankey
+               t_stxhkey
+        FROM MEMORY ID 'MGVDATA'.
+
+        CALL FUNCTION 'MASTERIDOC_CREATE_MATMAS'
+          EXPORTING
+            marakey       = f_marakey
+            rcvpfc        = ''
+            rcvprn        = ''
+            rcvprt        = ''
+            sndpfc        = ''
+            sndprn        = ''
+            sndprt        = ''
+            message_type  = c_matmas
+            flag_testmode = c_true
+          TABLES
+            maktkey       = t_maktkey
+            marckey       = t_marckey
+            mardkey       = t_mardkey "nicht für Pricat genutzt
+            marmkey       = t_marmkey
+            meankey       = t_meankey
+            mvkekey       = t_mvkekey
+            mlankey       = t_mlankey
+            mbewkey       = t_mbewkey "nicht für Pricat genutzt
+            mlgnkey       = t_mlgnkey "nicht für Pricat genutzt
+            mlgtkey       = t_mlgtkey "nicht für Pricat genutzt
+            stxhkey       = t_stxhkey
+            mfhmkey       = t_mfhmkey "nicht für Pricat genutzt
+            mpopkey       = t_mpopkey "nicht für Pricat genutzt
+            mprwkey       = t_mprwkey "nicht für Pricat genutzt
+            mvegkey       = t_mvegkey "nicht für Pricat genutzt
+            mveukey       = t_mveukey "nicht für Pricat genutzt
+            mpgdkey       = t_mpgdkey "nicht für Pricat genutzt
+            mkalkey       = t_mkalkey "nicht für Pricat genutzt
+          EXCEPTIONS
+            OTHERS        = 1.
+
+        IF ( sy-subrc IS INITIAL ).
+          IMPORT f_idoc_header
+                 t_idoc_data
+                 FROM MEMORY ID 'MGVIDOC'.
+
+*          DATA lv_lang TYPE sy-langu.
+*          lv_lang = 'E'.
+*          SELECT SINGLE spras
+*            INTO lv_lang
+*            FROM kna1
+*            WHERE kunnr = <fs_pricat_wrsz>-kunnr.
+
+*          CALL FUNCTION 'MATERIAL_INIT_CLASSIFICATION'.
+*
+*          CALL FUNCTION 'MATERIAL_READ_CLASSIFIC_RT'
+*            EXPORTING
+*              p_matnr           = f_marakey-matnr
+*              p_langu           = 'F'
+*              kz_valu_read      = 'X'
+*              kzrfb             = abap_true
+*            TABLES
+*              exp_valu          = lt_exp_valu
+*              exp_valu_assigned = lt_exp_valu_ass2
+*            EXCEPTIONS
+*              wrong_call        = 1
+*              mara_not_exist    = 2
+*              no_class          = 3
+*              no_char           = 4
+*              no_valu_vari      = 5
+*              valu_not_allowed  = 6
+*              OTHERS            = 7.
+
+*          IF lv_lang NE 'F'.
+          CALL FUNCTION 'MATERIAL_INIT_CLASSIFICATION'.
+
+          CALL FUNCTION 'MATERIAL_READ_CLASSIFIC_RT'
+            EXPORTING
+              p_matnr           = f_marakey-matnr
+              p_langu           = lv_lang
+              kz_valu_read      = 'X'
+              kzrfb             = abap_true
+            TABLES
+              exp_valu          = lt_exp_valu
+              exp_valu_assigned = lt_exp_valu_ass
+            EXCEPTIONS
+              wrong_call        = 1
+              mara_not_exist    = 2
+              no_class          = 3
+              no_char           = 4
+              no_valu_vari      = 5
+              valu_not_allowed  = 6
+              OTHERS            = 7.
+*          ENDIF.
+
+          IF ( sy-subrc IS INITIAL ).
+            LOOP AT lt_exp_valu_ass ASSIGNING FIELD-SYMBOL(<fs_exp_valu_ass>).
+**IZ-4647    le fournisseur fabricant ne doit pas être envoyé
+              IF <fs_exp_valu_ass>-atnam = 'FABRIQUANT'.
+                CONTINUE.
+              ENDIF.
+**fin IZ-4647
+
+**IZ-4644   les données prix ne doivent pas apparaitre
+              IF <fs_exp_valu_ass>-atnam = 'CRP_2742' OR <fs_exp_valu_ass>-atnam = 'CRP_2741'.
+                CONTINUE.
+              ENDIF.
+**fin IZ-4644
+
+**IZ-4646   le fournisseur fabricant ne doit pas être envoyé
+              IF <fs_exp_valu_ass>-atnam = 'FOURNISSEUR' OR <fs_exp_valu_ass>-atnam = 'CODE_FOURNISSEUR'.
+                CONTINUE.
+              ENDIF.
+**fin IZ-4646
+
+              CLEAR ls_idoc_data.
+
+              ls_idoc_data-segnam = 'E1PRIAUSP'.
+              ls_e1priausp-characteristic = <fs_exp_valu_ass>-atnam.
+
+*              IF ( <fs_exp_valu_ass>-atwrt EQ <fs_exp_valu_ass>-atwtb ).
+*                READ TABLE lt_exp_valu_ass2
+*                  ASSIGNING FIELD-SYMBOL(<fs_data_in_french>)
+*                  WITH KEY atnam = <fs_exp_valu_ass>-atnam.
+*                IF ( sy-subrc IS INITIAL ).
+*                  ls_e1priausp-description = <fs_data_in_french>-atwrt.
+*                  ls_e1priausp-description_long = <fs_data_in_french>-atwtb.
+*                ENDIF.
+*              ELSE.
+
+              ls_e1priausp-description = <fs_exp_valu_ass>-atwrt.
+              ls_e1priausp-description_long = <fs_exp_valu_ass>-atwtb.
+
+              REPLACE ALL OCCURRENCES OF 'â##' IN ls_e1priausp-description WITH ''.
+              lv_stringtoprocess = ls_e1priausp-description.
+              CALL FUNCTION 'Z_REPLACE_SPECIFIC_CHAR'
+                EXPORTING
+                  stringtoconvert = lv_stringtoprocess
+                IMPORTING
+                  stringconverted = lv_stringtoprocess.
+              ls_e1priausp-description = lv_stringtoprocess.
+
+
+              lv_stringtoprocess = ls_e1priausp-description_long.
+              CALL FUNCTION 'Z_REPLACE_SPECIFIC_CHAR'
+                EXPORTING
+                  stringtoconvert = lv_stringtoprocess
+                IMPORTING
+                  stringconverted = lv_stringtoprocess.
+              ls_e1priausp-description_long = lv_stringtoprocess.
+
+
+              IF <fs_exp_valu_ass>-atnam = 'NOMENCLATURE_DOUANE'.
+                CLEAR lv_stawn.
+                SELECT SINGLE stawn FROM marc WHERE
+                  matnr = @f_marakey-matnr
+                  INTO @lv_stawn.
+                ls_e1priausp-description = lv_stawn.
+              ENDIF.
+
+              MOVE ls_e1priausp TO ls_idoc_data-sdata.
+              APPEND ls_idoc_data TO t_idoc_data.
+
+              CLEAR ls_idoc_data.
+              ls_idoc_data-segnam = 'ZE1PRIAUSP'.
+              ls_ze1priausp-description = <fs_exp_valu_ass>-atbez.
+              MOVE ls_ze1priausp TO ls_idoc_data-sdata.
+              APPEND ls_idoc_data TO t_idoc_data.
+            ENDLOOP.
+          ENDIF.
+
+**AJOUT DE CARACTERISTIQUES COMPLEMENTAIRES (cf catalogue WEB CPI
+**PAYS D'ORIGINE
+          CLEAR ls_e1priausp.
+          CLEAR ls_idoc_data.
+          ls_idoc_data-segnam = 'E1PRIAUSP'.
+          ls_e1priausp-characteristic = 'PAYS_ORIGINE'.
+
+          SELECT SINGLE wherl FROM maw1 INTO ls_e1priausp-description
+          WHERE matnr = f_marakey-matnr.
+
+          IF ls_e1priausp-description IS INITIAL.
+            SELECT SINGLE herkl FROM mara INTO ls_e1priausp-description
+            WHERE matnr = f_marakey-matnr.
+          ENDIF.
+
+          SELECT SINGLE landx FROM t005t INTO ls_e1priausp-description_long
+          WHERE spras = 'F'
+          AND   land1 =  ls_e1priausp-description.
+
+          MOVE ls_e1priausp TO ls_idoc_data-sdata.
+          APPEND ls_idoc_data TO t_idoc_data.
+
+          CLEAR ls_ze1priausp.
+          CLEAR ls_idoc_data.
+          ls_idoc_data-segnam = 'ZE1PRIAUSP'.
+
+          SELECT SINGLE scrtext_l FROM dd04t INTO ls_ze1priausp-description
+          WHERE rollname = 'HERKL'
+            AND  ddlanguage = 'F'.
+
+          MOVE ls_ze1priausp TO ls_idoc_data-sdata.
+          APPEND ls_idoc_data TO t_idoc_data.
+
+
+          LOOP AT t_idoc_data ASSIGNING FIELD-SYMBOL(<fs_idoc_data_rich>).
+*              MOVE-CORRESPONDING t_idoc_data TO t_e1marxx_plus.
+            CASE <fs_idoc_data_rich>-segnam.
+**              SEGMENT E1MARAM
+              WHEN segm_27.
+                <fs_idoc_data_rich>-segnum = '100'.
+                <fs_idoc_data_rich>-hlevel = '03'.
+**              SEGMENT E1MARA1
+              WHEN segm_271.
+                <fs_idoc_data_rich>-segnum = '110'.
+                <fs_idoc_data_rich>-hlevel = '04'.
+*              SEGMENT E1MARCM
+              WHEN segm_8.
+                <fs_idoc_data_rich>-segnum = '120'.
+                <fs_idoc_data_rich>-hlevel = '04'.
+***              SEGMENT E1MARC1
+              WHEN segm_81.
+                <fs_idoc_data_rich>-segnum = '120'.
+                <fs_idoc_data_rich>-hlevel = '05'.
+**              SEGMENT E1MARMM
+              WHEN segm_29.
+                <fs_idoc_data_rich>-segnum = '125'.
+                <fs_idoc_data_rich>-hlevel = '04'.
+**              SEGMENT E1MAKTM
+              WHEN segm_11.
+                <fs_idoc_data_rich>-segnum = '130'.
+                <fs_idoc_data_rich>-hlevel = '04'.
+**              SEGMENT E1MTXHM
+              WHEN segm_13.
+                <fs_idoc_data_rich>-segnum = '140'.
+                <fs_idoc_data_rich>-hlevel = '04'.
+**              SEGMENT E1MTXLM
+              WHEN segm_14.
+                <fs_idoc_data_rich>-segnum = '140'.
+                <fs_idoc_data_rich>-hlevel = '04'.
+**              SEGMENT E1MVKEM
+              WHEN segm_12.
+                <fs_idoc_data_rich>-segnum = '135'.
+                <fs_idoc_data_rich>-hlevel = '04'.
+**              SEGMENT E1MEANM
+              WHEN 'E1PRIAUSP'.
+                <fs_idoc_data_rich>-segnum = '115'.
+                <fs_idoc_data_rich>-hlevel = '04'.
+              WHEN 'ZE1PRIAUSP'.
+                <fs_idoc_data_rich>-segnum = '115'.
+                <fs_idoc_data_rich>-hlevel = '05'.
+              WHEN OTHERS.
+            ENDCASE.
+          ENDLOOP.
+
+          DATA : lv_count  TYPE sy-tabix,
+                 lv_eureka TYPE boolean,
+                 i         TYPE sy-tabix.
+
+          CLEAR lt_idoc_mara.
+          LOOP AT t_idoc_data ASSIGNING FIELD-SYMBOL(<fs_source>) WHERE segnum NE '000000'.
+            DESCRIBE TABLE lt_idoc_mara LINES lv_count.
+            i = lv_count.
+            lv_eureka = abap_false.
+            DO  lv_count TIMES.
+              READ TABLE lt_idoc_mara ASSIGNING FIELD-SYMBOL(<fs_target>) INDEX i.
+              IF ( <fs_source>-segnum LT <fs_target>-segnum ).
+                i = i - 1.
+              ELSEIF ( <fs_source>-segnum GT <fs_target>-segnum ).
+                EXIT.
+              ELSEIF ( <fs_source>-segnum EQ <fs_target>-segnum ).
+                EXIT.
+              ENDIF.
+            ENDDO.
+
+            IF ( i EQ lv_count ).
+              APPEND <fs_source> TO lt_idoc_mara.
+            ELSEIF ( i LT lv_count ).
+              i = i + 1.
+              INSERT <fs_source> INTO lt_idoc_mara INDEX i.
+            ENDIF.
+          ENDLOOP.
+
+
+          LOOP AT lt_idoc_mara ASSIGNING FIELD-SYMBOL(<fs_idoc_data_mara>).
+
+*              MOVE-CORRESPONDING lt_idoc_mara TO t_e1marxx_plus.
+            CASE <fs_idoc_data_mara>-segnam.
+
+**              SEGMENT E1MARAM
+              WHEN segm_27.
+                MOVE <fs_idoc_data_mara>-sdata TO ls_e1maram.
+                IF ( ls_e1maram IS NOT INITIAL ).
+                  lv_segnum = lv_segnum + 1.
+                  ls_idoc_data-segnum    = lv_segnum.
+                  ls_idoc_data-mandt     = sy-mandt.
+                  ls_idoc_data-segnam    = 'E1MARAM'.
+                  MOVE ls_e1maram TO ls_idoc_data-sdata.
+                  APPEND ls_idoc_data TO lt_idoc_data.
+                  APPEND ls_idoc_data TO lt_idoc_data_temp. "Split idoc
+                  lv_oksegm_8 = abap_false.
+                  lv_oksegm_81 = abap_false.
+                ENDIF.
+
+**              SEGMENT E1MARA1
+              WHEN segm_271.
+                MOVE <fs_idoc_data_mara>-sdata TO ls_e1mara1.
+                IF ( ls_e1mara1 IS NOT INITIAL ).
+                  lv_segnum = lv_segnum + 1.
+                  ls_idoc_data-segnum    = lv_segnum.
+                  ls_idoc_data-mandt     = sy-mandt.
+                  ls_idoc_data-segnam    = 'E1MARA1'.
+                  MOVE ls_e1mara1 TO ls_idoc_data-sdata.
+                  APPEND ls_idoc_data TO lt_idoc_data.
+                  APPEND ls_idoc_data TO lt_idoc_data_temp. "Split idoc
+                ENDIF.
+
+**              SEGMENT E1MARCM
+              WHEN segm_8.
+                IF ( lv_oksegm_8 = abap_false ).
+                  lv_oksegm_8 = abap_true.
+                  MOVE <fs_idoc_data_mara>-sdata TO ls_e1marcm.
+                  IF ( ls_e1marcm IS NOT INITIAL ).
+                    lv_segnum = lv_segnum + 1.
+                    ls_idoc_data-segnum    = lv_segnum.
+                    ls_idoc_data-mandt     = sy-mandt.
+                    ls_idoc_data-segnam    = 'E1MARCM'.
+
+                    SELECT SINGLE herkl, stawn
+                      INTO @DATA(dt_data_marc)
+                      FROM marc
+                      WHERE matnr = @f_marakey-matnr
+                      AND werks   = @ls_e1marcm-werks.
+                    IF ( sy-subrc IS INITIAL AND
+                         dt_data_marc IS NOT INITIAL ).
+                      ls_e1marcm-herkl = dt_data_marc-herkl.
+                      ls_e1marcm-stawn = dt_data_marc-stawn.
+                    ENDIF.
+
+                    MOVE ls_e1marcm TO ls_idoc_data-sdata.
+                    APPEND ls_idoc_data TO lt_idoc_data.
+                    APPEND ls_idoc_data TO lt_idoc_data_temp. "Split idoc
+                  ENDIF.
+                ENDIF.
+**              SEGMENT E1MARC1
+              WHEN segm_81.
+                IF ( lv_oksegm_8 = abap_true AND lv_oksegm_81 = abap_false ).
+                  lv_oksegm_81 = abap_true.
+                  MOVE <fs_idoc_data_mara>-sdata TO ls_e1marc1.
+                  IF ( ls_e1marc1 IS NOT INITIAL ).
+                    lv_segnum = lv_segnum + 1.
+                    ls_idoc_data-segnum    = lv_segnum.
+                    ls_idoc_data-mandt     = sy-mandt.
+                    ls_idoc_data-segnam    = 'E1MARC1'.
+                    MOVE ls_e1marc1 TO ls_idoc_data-sdata.
+                    APPEND ls_idoc_data TO lt_idoc_data.
+                    APPEND ls_idoc_data TO lt_idoc_data_temp. "Split idoc
+                  ENDIF.
+                ENDIF.
+*                lv_oksegm_8 = abap_false.
+**              SEGMENT E1MARMM
+              WHEN segm_29.
+                MOVE <fs_idoc_data_mara>-sdata TO ls_e1marmm.
+                MOVE-CORRESPONDING ls_e1marmm TO ls_e1pmarm.
+                IF ( ls_e1pmarm IS NOT INITIAL ).
+                  lv_segnum = lv_segnum + 1.
+                  ls_idoc_data-segnum    = lv_segnum.
+                  ls_idoc_data-mandt     = sy-mandt.
+                  ls_idoc_data-segnam    = 'E1PMARM'.
+
+*                  READ TABLE lt_unitofmeasureext
+*                    WITH KEY uom1 =  ls_e1pmarm-meinh
+*                    ASSIGNING FIELD-SYMBOL(<fs_uom_firstletter>).
+
+                  CLEAR ls_e1pmarm-pcode_1.
+                  IF ( strlen( ls_e1pmarm-meinh ) = 3 ).
+                    LOOP AT lt_unitofmeasureext ASSIGNING FIELD-SYMBOL(<fs_data_uom>).
+                      IF ( <fs_data_uom>-uom1(1) EQ ls_e1pmarm-meinh(1) ).
+                        ls_e1pmarm-pcode_1 = <fs_data_uom>-uom0.
+                        EXIT.
+                      ENDIF.
+                    ENDLOOP.
+                  ENDIF.
+*                  IF ( sy-subrc IS INITIAL ).
+*                    ls_e1pmarm-pcode_1 = <fs_uom_firstletter>-uom0.
+*                  ELSE.
+*                    CLEAR ls_e1pmarm-pcode_1.
+*                  ENDIF.
+
+                  MOVE ls_e1pmarm TO ls_idoc_data-sdata.
+                  APPEND ls_idoc_data TO lt_idoc_data.
+                  APPEND ls_idoc_data TO lt_idoc_data_temp. "Split idoc
+                ENDIF.
+**              SEGMENT E1MAKTM
+              WHEN segm_11.
+                MOVE <fs_idoc_data_mara>-sdata TO ls_e1maktm.
+                IF ( ls_e1maktm IS NOT INITIAL ).
+                  lv_segnum = lv_segnum + 1.
+                  ls_idoc_data-segnum    = lv_segnum.
+                  ls_idoc_data-mandt     = sy-mandt.
+                  ls_idoc_data-segnam    = 'E1MAKTM'.
+                  MOVE ls_e1maktm TO ls_idoc_data-sdata.
+                  APPEND ls_idoc_data TO lt_idoc_data.
+                  APPEND ls_idoc_data TO lt_idoc_data_temp. "Split idoc
+                ENDIF.
+**              SEGMENT E1BPE1MAMTRT
+              WHEN segm_18.
+                MOVE <fs_idoc_data_mara>-sdata TO ls_e1bpe1mamtrt.
+                IF ( ls_e1bpe1mamtrt IS NOT INITIAL ).
+                  lv_segnum = lv_segnum + 1.
+                  ls_idoc_data-segnum    = lv_segnum.
+                  ls_idoc_data-mandt     = sy-mandt.
+                  ls_idoc_data-segnam    = 'E1BPE1MAMTRT'.
+                  MOVE ls_e1bpe1mamtrt TO ls_idoc_data-sdata.
+                  APPEND ls_idoc_data TO lt_idoc_data.
+                  APPEND ls_idoc_data TO lt_idoc_data_temp. "Split idoc
+                ENDIF.
+**              SEGMENT E1MTXHM
+              WHEN segm_13.
+                MOVE <fs_idoc_data_mara>-sdata TO ls_e1mtxhm.
+                IF ( ls_e1mtxhm IS NOT INITIAL ).
+                  lv_segnum = lv_segnum + 1.
+                  ls_idoc_data-segnum    = lv_segnum.
+                  ls_idoc_data-mandt     = sy-mandt.
+                  ls_idoc_data-segnam    = 'E1MTXHM'.
+                  MOVE ls_e1mtxhm TO ls_idoc_data-sdata.
+                  APPEND ls_idoc_data TO lt_idoc_data.
+                  APPEND ls_idoc_data TO lt_idoc_data_temp. "Split idoc
+                ENDIF.
+**              SEGMENT E1MTXLM
+              WHEN segm_14.
+                MOVE <fs_idoc_data_mara>-sdata TO ls_e1mtxlm.
+                IF ( ls_e1mtxlm IS NOT INITIAL ).
+                  lv_segnum = lv_segnum + 1.
+                  ls_idoc_data-segnum    = lv_segnum.
+                  ls_idoc_data-mandt     = sy-mandt.
+                  ls_idoc_data-segnam    = 'E1MTXLM'.
+
+                  DATA : lv_input  TYPE string,
+                         lv_output TYPE string.
+
+                  lv_input = ls_e1mtxlm-tdline.
+*                 SAP / SO10 : itf to ASCii (voir note oss 277603) "27/08/2021
+                  PERFORM convert_itf_to_ascii CHANGING lv_input.  "27/08/2021
+
+                  CALL FUNCTION 'Z_REPLACE_SPECIFIC_CHAR'
+                    EXPORTING
+                      stringtoconvert = lv_input
+                    IMPORTING
+                      stringconverted = lv_output.
+
+                  ls_e1mtxlm-tdline = lv_output.
+                  MOVE ls_e1mtxlm TO ls_idoc_data-sdata.
+                  APPEND ls_idoc_data TO lt_idoc_data.
+                  APPEND ls_idoc_data TO lt_idoc_data_temp. "Split idoc
+                ENDIF.
+**              SEGMENT E1VRKME
+              WHEN segm_12.
+                IF ( lv_oksegm_12 = abap_false ).
+                  lv_oksegm_12 = abap_true.
+                  MOVE <fs_idoc_data_mara>-sdata TO ls_e1mtxlm.
+                  IF ( ls_e1mtxlm IS NOT INITIAL ).
+                    lv_segnum = lv_segnum + 1.
+                    ls_idoc_data-segnum    = lv_segnum.
+                    ls_idoc_data-mandt     = sy-mandt.
+                    ls_idoc_data-segnam    = 'E1MVKEM'.
+                    MOVE ls_e1mtxlm TO ls_idoc_data-sdata.
+                    APPEND ls_idoc_data TO lt_idoc_data.
+                    APPEND ls_idoc_data TO lt_idoc_data_temp. "Split idoc
+                  ENDIF.
+                ENDIF.
+
+**              SEGMENT E1PRIAUSP
+              WHEN 'E1PRIAUSP'.
+                MOVE <fs_idoc_data_mara>-sdata TO ls_e1priausp.
+                IF ( ls_e1priausp IS NOT INITIAL ).
+                  lv_segnum = lv_segnum + 1.
+                  ls_idoc_data-segnum    = lv_segnum.
+                  ls_idoc_data-mandt     = sy-mandt.
+                  ls_idoc_data-segnam    = 'E1PRIAUSP'.
+                  MOVE ls_e1priausp TO ls_idoc_data-sdata.
+                  APPEND ls_idoc_data TO lt_idoc_data.
+                  APPEND ls_idoc_data TO lt_idoc_data_temp. "Split idoc
+                ENDIF.
+
+              WHEN 'ZE1PRIAUSP'.
+                MOVE <fs_idoc_data_mara>-sdata TO ls_ze1priausp.
+                IF ( ls_ze1priausp IS NOT INITIAL ).
+                  lv_segnum = lv_segnum + 1.
+                  ls_idoc_data-segnum    = lv_segnum.
+                  ls_idoc_data-mandt     = sy-mandt.
+                  ls_idoc_data-segnam    = 'ZE1PRIAUSP'.
+                  MOVE ls_ze1priausp TO ls_idoc_data-sdata.
+                  APPEND ls_idoc_data TO lt_idoc_data.
+                  APPEND ls_idoc_data TO lt_idoc_data_temp. "Split idoc
+                ENDIF.
+
+              WHEN OTHERS.
+
+            ENDCASE.
+          ENDLOOP.
+
+          REFRESH : lt_pit_conditions,
+                    lt_condvente.
+
+*          IF ( lt_listoftable IS INITIAL ).
+*            DO 2 TIMES.
+*              lv_sequencevente = COND text4(
+*               WHEN sy-index = 1  THEN 'ZPR0'    " vente entrepôt
+*               WHEN sy-index = 2  THEN 'ZDIR'    " vente directe
+*              ).
+*
+*              " enregistre ensemble types de condition
+*              SELECT kozgf kschl
+*                APPENDING TABLE lt_typecondition
+*                FROM t685
+*                WHERE kozgf = lv_sequencevente.
+*              IF ( sy-subrc IS INITIAL ).
+*                DESCRIBE TABLE lt_typecondition LINES lv_countcondition.
+*              ENDIF.
+*
+*              " recherche liste tables de données
+*              SELECT kotabnr
+*                APPENDING  TABLE lt_listoftable
+*                FROM t682i
+*                WHERE kozgf = lv_sequencevente.
+*              IF ( sy-subrc IS INITIAL ).
+*                SORT lt_listoftable BY code.
+*                DESCRIBE TABLE lt_listoftable LINES lv_counttable.
+*              ENDIF.
+*
+*              " recherche conditions de vente dans tables A*
+*              CLEAR lv_lecturetable.
+*              CLEAR lt_condvente.
+*              DO lv_counttable TIMES.                       " loop sur table A*
+*                lv_lecturetable = lv_lecturetable + 1.
+*                CLEAR lv_lecturecondition.
+*                READ TABLE lt_listoftable
+*                  ASSIGNING FIELD-SYMBOL(<fs_table>)
+*                  INDEX lv_lecturetable.
+*                IF ( sy-subrc = 0 ).
+*                  CLEAR lv_idcondvente.
+*                  CLEAR lt_currentvente.
+*                  CONCATENATE 'A' <fs_table>-code INTO lv_selectfrom.
+*                  " controle table paramétrée contient le champ vrkme -> select
+*                  SELECT SINGLE fieldname
+*                    INTO  lv_controlevrkme
+*                    FROM dd03l
+*                    WHERE tabname = lv_selectfrom
+*                    AND  fieldname = 'PLTYP'.
+*                  IF ( sy-subrc IS INITIAL ).
+*                    SELECT SINGLE fieldname
+*                      INTO  lv_controlevrkme
+*                      FROM dd03l
+*                      WHERE tabname = lv_selectfrom
+*                      AND  fieldname = 'VRKME'.
+*                    IF ( sy-subrc = 0 ).
+*                      <fs_table>-field = 'VRKME'.
+*                    ELSE.
+*                      <fs_table>-field = ''.
+*                    ENDIF.
+*                  ELSE.
+*                    <fs_table>-field = 'NOPLTYP'.
+*                  ENDIF.
+*                  <fs_table>-name = lv_selectfrom.
+*                ENDIF.
+*              ENDDO.
+*            ENDDO.
+*            DELETE lt_listoftable WHERE field = 'NOPLTYP'.
+*          ENDIF.
+
+
+          IF ( lt_listoftable IS NOT INITIAL ).
+*            SORT lt_listoftable BY code.
+*
+*            DELETE ADJACENT DUPLICATES FROM lt_listoftable COMPARING code.
+
+*            LOOP AT t_marmkey ASSIGNING FIELD-SYMBOL(<fs_marmunit>).
+            LOOP AT lt_listoftable ASSIGNING FIELD-SYMBOL(<fs_file>).
+              lv_selectfrom = <fs_file>-name.
+
+              CLEAR lv_lecturecondition.
+*                DO lv_countcondition TIMES.
+
+*                  READ TABLE lt_typecondition
+*                    ASSIGNING FIELD-SYMBOL(<fs_typecondition>)
+*                    INDEX sy-index.
+
+*                  IF ( sy-subrc IS INITIAL ).
+*                    SELECT SINGLE pltyp
+*                      INTO lv_pltyp
+*                      FROM knvv
+*                      WHERE kunnr = <fs_pricat_wrsz>-kunnr
+*                      AND vkorg = <fs_pricat_wrsz>-vkorg
+*                      AND vtweg = <fs_pricat_wrsz>-vtweg
+*                      AND spart = <fs_pricat_wrsz>-spart.
+
+
+              IF ( <fs_file>-field EQ 'VRKME' ).
+                SELECT knumh kschl
+                  APPENDING TABLE lt_condvente
+                  FROM (lv_selectfrom)
+                  WHERE matnr = f_marakey-matnr
+                  AND kappl = 'V'
+*                        AND kschl = <fs_typecondition>-code
+                  AND datbi >= sy-datum
+                  AND datab <= sy-datum
+*                        AND vrkme = <fs_marmunit>-meinh
+                  AND pltyp = lv_pltyp.
+              ELSE.
+                SELECT knumh kschl
+                  APPENDING TABLE lt_condvente
+                  FROM (lv_selectfrom)
+                  WHERE matnr = f_marakey-matnr
+                  AND kappl = 'V'
+*                        AND kschl = <fs_typecondition>-code
+                  AND datbi >= sy-datum
+                  AND datab <= sy-datum
+                  AND pltyp = lv_pltyp.
+              ENDIF.
+*                  ENDIF.
+              IF ( sy-subrc IS INITIAL ).
+                CLEAR ls_pit_conditions.
+                DESCRIBE TABLE lt_condvente LINES lv_lastrecord.
+
+                IF ( lv_savelastrecord IS INITIAL ).
+                  lv_savelastrecord = 1.
+                ENDIF.
+
+                SORT lt_condvente BY numero.
+                DELETE ADJACENT DUPLICATES FROM lt_condvente COMPARING numero.
+
+                LOOP AT lt_condvente ASSIGNING FIELD-SYMBOL(<fs_condvente>).
+                  ls_pit_conditions-knumh = <fs_condvente>-numero.
+                  ls_pit_conditions-kvewe = 'A'.
+                  ls_pit_conditions-kotabnr = lv_selectfrom+1.    " suppress prefix A
+                  ls_pit_conditions-kappl = 'V'.
+                  ls_pit_conditions-kschl = <fs_condvente>-type_cond. "<fs_typecondition>-code.
+                  APPEND ls_pit_conditions TO  lt_pit_conditions.
+                ENDLOOP.
+
+              ENDIF.
+*                ENDDO.
+            ENDLOOP.
+*            ENDLOOP.
+          ENDIF.
+
+          IF ( lt_pit_conditions IS NOT INITIAL ).
+
+            SORT lt_pit_conditions BY knumh.
+            DELETE ADJACENT DUPLICATES FROM lt_pit_conditions COMPARING knumh.
+
+            lo_cond_vakey_srv = cl_cond_vakey_srv=>get_instance( ).
+            IF ( lt_pit_conditions IS NOT INITIAL ).
+              SORT lt_pit_conditions BY knumh.
+            ENDIF.
+
+            LOOP AT lt_pit_conditions ASSIGNING FIELD-SYMBOL(<fs_pit_conditions>).
+
+              CLEAR : lv_flaginsert_e1konh,
+                      lv_flaginsert_e1konp,
+                      lv_flaginsert_e1konm,
+                      lv_flaginsert_e1konw.
+
+              SELECT *
+                FROM konp
+                INTO TABLE lt_temp_konp
+                WHERE knumh = <fs_pit_conditions>-knumh
+                AND loevm_ko <> ''.                         " flag conditions supprimées.
+              IF ( sy-subrc IS INITIAL ).
+                CONTINUE.
+              ENDIF.
+              CLEAR lt_temp_konh.
+              SELECT SINGLE *
+                FROM konh
+                INTO ls_konh
+                WHERE knumh = <fs_pit_conditions>-knumh.
+              IF sy-subrc = 0.    "PERF
+                APPEND ls_konh TO lt_temp_konh.
+              ENDIF.
+              IF ( sy-subrc IS INITIAL ).
+                TRY.
+                    ls_vakey_vadat =
+                      lo_cond_vakey_srv->det_vakey_and_vadat_from_db( iv_usage = ls_konh-kvewe
+                                                                      iv_kotabnr = ls_konh-kotabnr
+                                                                      iv_knumh   = ls_konh-knumh
+                                                                      iv_bypassing_buffer = abap_false ).
+                  CATCH cx_cond_vakey INTO o_cx_ref.
+                    CLEAR ls_vakey_vadat.
+                ENDTRY.
+
+                <fs_pit_conditions>-vakey = ls_vakey_vadat-vakey.
+                <fs_pit_conditions>-vadat = ls_vakey_vadat-vadat.
+
+                CLEAR : ls_idoc_komg,
+                        ls_idoc_zkomg.
+
+                PERFORM varkey_to_komg
+                  IN PROGRAM saplvkoe
+                  USING <fs_pit_conditions>-kotabnr
+                        <fs_pit_conditions>-kvewe
+                        <fs_pit_conditions>-vakey
+                        ls_idoc_komg.
+
+                TRY.
+                    lv_vakey100 =
+                      lo_cond_vakey_srv->determine_vakey_100( iv_usage   = <fs_pit_conditions>-kvewe
+                                                              iv_kotabnr = <fs_pit_conditions>-kotabnr
+                                                              iv_vakey_long = <fs_pit_conditions>-vakey ).
+                  CATCH cx_cond_vakey INTO o_cx_ref.
+                    CLEAR lv_vakey100.
+                ENDTRY.
+
+                MOVE-CORRESPONDING ls_idoc_komg TO ls_idoc_zkomg.
+
+                ls_idoc_zkomg-kvewe      = <fs_pit_conditions>-kvewe.
+                ls_idoc_zkomg-kotabnr    = <fs_pit_conditions>-kotabnr.
+                ls_idoc_zkomg-kappl      = <fs_pit_conditions>-kappl.
+                ls_idoc_zkomg-kschl      = <fs_pit_conditions>-kschl.
+                ls_idoc_zkomg-vakey      = lv_vakey100(50).
+                ls_idoc_zkomg-vakey_long = lv_vakey100.
+                ls_idoc_zkomg-evrtn      = ls_idoc_komg-evrtn.
+                ls_idoc_zkomg-evrtp      = ls_idoc_komg-evrtp.
+                MOVE-CORRESPONDING ls_idoc_zkomg TO ls_e1pkomg.
+
+                lv_segnum = lv_segnum + 1.
+                ls_idoc_data-segnum    = lv_segnum.
+                ls_idoc_data-mandt     = sy-mandt.
+                ls_idoc_data-segnam    = 'E1PKOMG'.
+
+
+*               programming modification by GPi by 29.01.2021
+*                lv_flaginsert_e1pkomg = abap_false.
+*                SELECT SINGLE meins
+*                  INTO @DATA(lv_eina_meins)
+*                  FROM eina
+*                  WHERE matnr = @ls_idoc_zkomg-matnr
+*                  AND   meins = @ls_idoc_zkomg-vrkme.
+*                IF ( sy-subrc IS INITIAL ).
+*               programming modification by GPi by 29.01.2021
+
+                MOVE ls_e1pkomg TO ls_idoc_data-sdata.
+                APPEND ls_idoc_data TO lt_idoc_data.
+                APPEND ls_idoc_data TO lt_idoc_data_temp. "Split idoc
+                lv_flaginsert_e1pkomg = abap_true.
+*                ENDIF.
+
+              ENDIF.
+
+              " données en-tête condition de vente
+              CLEAR ls_idoc_zkonh.
+              IF ( lv_flaginsert_e1pkomg = abap_true ).
+*                SELECT *
+*                  FROM konh
+*                  INTO TABLE lt_temp_konh
+*                  WHERE knumh = <fs_pit_conditions>-knumh.
+
+*                IF ( sy-subrc IS INITIAL ).
+                MOVE-CORRESPONDING lt_temp_konh TO lt_idoc_e1konh.
+
+                LOOP AT lt_idoc_e1konh ASSIGNING FIELD-SYMBOL(<ls_temp_e1konh>).
+                  lv_segnum = lv_segnum + 1.
+                  ls_idoc_data-segnum = lv_segnum.
+                  ls_idoc_data-mandt  = sy-mandt.
+                  ls_idoc_data-segnam = 'E1KONH'.
+
+                  ls_idoc_data-sdata  = <ls_temp_e1konh>.
+                  APPEND ls_idoc_data TO lt_idoc_data.
+                  APPEND ls_idoc_data TO lt_idoc_data_temp. "Split idoc
+                  lv_flaginsert_e1konh = abap_true.
+                ENDLOOP.
+*                ENDIF.
+              ENDIF.
+
+              " données poste condition de vente
+              CLEAR ls_idoc_zkonp.
+              IF ( lv_flaginsert_e1konh = abap_true ).
+                SELECT *
+                  FROM konp
+                  INTO TABLE lt_temp_konp
+                  WHERE knumh = <fs_pit_conditions>-knumh
+                  AND loevm_ko = ''.                         " flag conditions supprimées.
+
+
+
+                IF ( sy-subrc IS INITIAL AND
+                     NOT lt_temp_konp IS INITIAL ).
+
+                  SELECT *
+           FROM konm
+           INTO TABLE lt_temp_konm
+             FOR ALL ENTRIES IN lt_temp_konp
+           WHERE knumh = lt_temp_konp-knumh
+           AND   kopos = lt_temp_konp-kopos.
+
+                  SELECT *
+                FROM konw
+                INTO TABLE lt_temp_konw
+                    FOR ALL ENTRIES IN lt_temp_konp
+                WHERE knumh = lt_temp_konp-knumh
+                AND   kopos = lt_temp_konp-kopos.
+
+**IZ-4645: Ajout d'un segment contenant la DLC lié à FIA de la condition de vente
+                  READ TABLE lt_temp_konp INDEX 1 INTO ls_konp.
+                  IF NOT ls_e1konp-knumt IS INITIAL.
+                    CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+                      EXPORTING
+                        input  = ls_konp-knumt(5)
+                      IMPORTING
+                        output = ls_konp-lifnr.
+                  ENDIF.
+
+                  DATA lv_infr TYPE infnr.
+                  DATA lv_mhdrz TYPE mhdrz.
+
+                  CLEAR lv_mhdrz.
+                  IF ls_konp-lifnr IS NOT INITIAL.
+
+                    CLEAR : lv_mhdrz, lv_infr.
+                    SELECT SINGLE infnr FROM eina INTO lv_infr WHERE matnr = ls_e1pkomg-matnr AND lifnr = ls_konp-lifnr.
+                    IF sy-subrc = 0.
+                      SELECT SINGLE MIN( mhdrz ) FROM eine INTO lv_mhdrz WHERE infnr = lv_infr.
+                      IF sy-subrc <> 0.
+                        CLEAR lv_mhdrz.
+                      ENDIF.
+                    ENDIF.
+                  ELSE.
+
+                    TYPES: BEGIN OF ty_infnr,
+                             infnr TYPE infnr,
+                           END OF ty_infnr,
+
+                           BEGIN OF ty_mhdrz,
+                             mhdrz TYPE mhdrz,
+                           END OF ty_mhdrz.
+
+                    DATA lt_infnr TYPE TABLE OF ty_infnr.
+                    DATA lt_mhdrz TYPE TABLE OF ty_mhdrz.
+
+                    CLEAR : lt_mhdrz[], lt_infnr[].
+
+                    SELECT  infnr FROM eina INTO TABLE lt_infnr WHERE matnr = ls_e1pkomg-matnr AND lifnr LIKE 'E%'.
+                    IF sy-subrc = 0.
+                      SELECT  mhdrz FROM eine INTO TABLE lt_mhdrz FOR ALL ENTRIES IN lt_infnr WHERE infnr = lt_infnr-infnr.
+                      IF sy-subrc = 0.
+                        DELETE lt_mhdrz WHERE mhdrz = 0.
+*                                        SORT lt_mhdrz ASCENDING.
+                        SORT  lt_mhdrz BY  mhdrz ASCENDING .
+                        CLEAR lv_mhdrz.
+                        READ TABLE lt_mhdrz INTO DATA(ls_mhdrz) INDEX 1.
+                        IF sy-subrc = 0.
+                          MOVE ls_mhdrz-mhdrz TO lv_mhdrz.
+                        ELSE.
+                          CLEAR lv_mhdrz.
+                        ENDIF.
+                      ENDIF.
+                    ENDIF.
+                  ENDIF.
+                  lv_segnum = lv_segnum + 1.
+                  ls_idoc_data-segnum = lv_segnum.
+                  ls_idoc_data-mandt  = sy-mandt.
+                  ls_idoc_data-segnam = 'ZE1WBB13'.
+*IF NOT lv_mhdrz IS INITIAL.
+                  ls_ze1wbb13-mhdrz = lv_mhdrz.
+*ENDIF.
+                  CLEAR lv_mhdrz..
+                  ls_idoc_data-sdata  = ls_ze1wbb13.
+                  CLEAR ls_ze1wbb13.
+                  APPEND ls_idoc_data TO lt_idoc_data.
+                  APPEND ls_idoc_data TO lt_idoc_data_temp. "Split idoc
+*Fin IZ-4645
+
+                  SORT lt_temp_konp BY knumh kopos ASCENDING.
+                  LOOP AT lt_temp_konp ASSIGNING FIELD-SYMBOL(<fs_temp_konp>).
+                    lv_segnum = lv_segnum + 1.
+                    ls_idoc_data-segnum = lv_segnum.
+                    ls_idoc_data-mandt  = sy-mandt.
+                    ls_idoc_data-segnam = 'E1KONP'.
+
+                    MOVE-CORRESPONDING <fs_temp_konp> TO ls_e1konp.
+                    ls_e1konp-kbetr = ls_e1konp-kbetr / 10.
+**IZ-4645   le code fournisseur ne doit pas être en clair
+                    CLEAR ls_e1konp-lifnr.
+**fin IZ-4645
+
+                    ls_idoc_data-sdata  = ls_e1konp.
+                    APPEND ls_idoc_data TO lt_idoc_data.
+                    APPEND ls_idoc_data TO lt_idoc_data_temp. "Split idoc
+                    lv_flaginsert_e1konp = abap_true.
+
+                    "  données baremes quantitatifs condition de vente
+                    CLEAR ls_idoc_zkonm.
+                    IF ( lv_flaginsert_e1konp = abap_true ).
+*                      SELECT *
+*                        FROM konm
+*                        INTO TABLE lt_temp_konm
+*                        WHERE knumh = <fs_pit_conditions>-knumh
+*                        AND   kopos = <fs_temp_konp>-kopos.
+
+                      IF NOT lt_temp_konm IS INITIAL .                               "sy-subrc IS INITIAL AND   PERF
+
+                        LOOP AT lt_temp_konm ASSIGNING FIELD-SYMBOL(<fs_temp_konm>) WHERE kopos = <fs_temp_konp>-kopos. .
+
+                          lv_segnum = lv_segnum + 1.
+                          ls_idoc_data-segnum = lv_segnum.
+                          ls_idoc_data-mandt  = sy-mandt.
+                          ls_idoc_data-segnam    = 'E1KONM'.
+
+                          MOVE-CORRESPONDING <fs_temp_konm> TO ls_e1konm.
+                          ls_e1konm-kbetr =  ls_e1konm-kbetr / 10.
+                          ls_idoc_data-sdata  = ls_e1konm.
+                          APPEND ls_idoc_data TO lt_idoc_data.
+                          APPEND ls_idoc_data TO lt_idoc_data_temp. "Split idoc
+                          lv_flaginsert_e1konm = abap_true.
+                        ENDLOOP.
+                      ENDIF.
+                    ENDIF.
+
+                    " données baremes en valeur condition de vente
+                    CLEAR ls_idoc_zkonw.
+                    IF ( lv_flaginsert_e1konp = abap_true ).
+*                      SELECT *
+*                        FROM konw
+*                        INTO TABLE lt_temp_konw
+*                        WHERE knumh = <fs_pit_conditions>-knumh
+*                        AND   kopos = <fs_temp_konp>-kopos.
+
+                      IF (                                            "sy-subrc IS INITIAL AND  PERF
+                        NOT lt_temp_konw IS INITIAL ).
+
+                        LOOP AT lt_temp_konw ASSIGNING FIELD-SYMBOL(<fs_temp_konw>) WHERE kopos = <fs_temp_konp>-kopos.
+                          lv_segnum = lv_segnum + 1.
+                          ls_idoc_data-segnum = lv_segnum.
+                          ls_idoc_data-mandt  = sy-mandt.
+                          ls_idoc_data-segnam = 'E1KONW'.
+
+                          MOVE-CORRESPONDING <fs_temp_konw> TO ls_e1konw.
+                          ls_e1konw-kbetr = ls_e1konw-kbetr / 10.
+                          ls_idoc_data-sdata  = ls_e1konw.
+                          APPEND ls_idoc_data TO lt_idoc_data.
+                          APPEND ls_idoc_data TO lt_idoc_data_temp. "Split idoc
+                          lv_flaginsert_e1konw = abap_true.
+                        ENDLOOP.
+                      ENDIF.
+                    ENDIF.
+                  ENDLOOP.
+                ENDIF.
+              ENDIF.
+
+
+            ENDLOOP.
+          ENDIF.
+        ENDIF.
+      ENDIF.
+
+
+      IF ( lv_count_split EQ lv_maxsplit  AND
+           lv_xmlcsv EQ 'X' ).
+        f_idoc_header-mandt    = sy-mandt.
+        f_idoc_header-direct   = '1'.
+        f_idoc_header-rcvpor   = lv_rcvpor.
+        f_idoc_header-rcvprt   = lv_rcvprt.
+        f_idoc_header-rcvprn   = lv_rcvprn.
+        f_idoc_header-rcvpfc   = lv_rcvpfc.
+        f_idoc_header-sndpor   = lv_sndpor.
+        f_idoc_header-sndprt   = lv_sndprt.
+        f_idoc_header-sndprn   = lv_sndprn.
+        f_idoc_header-sndpfc   = lv_sndpfc.
+        f_idoc_header-idoctp   = c_pricat_03.
+        f_idoc_header-mestyp   = 'PRICAT'.
+        f_idoc_header-cimtyp   = 'ZPRICAT03'.
+        f_idoc_header-serial   = sy-datum.
+        f_idoc_header-serial+8 = sy-uzeit.
+
+        CLEAR : lv_segnum, lv_count_e1wsohm.
+
+        LOOP AT lt_idoc_data_temp ASSIGNING FIELD-SYMBOL(<fs_generate_idoc>).
+          IF ( <fs_generate_idoc>-segnam EQ 'E1WSOHM' ).
+            CASE lv_count_e1wsohm.
+              WHEN 0.
+                DESCRIBE TABLE lt_beforee1wsohm LINES lv_segnum_newidoc.
+                lt_newidoc_data = lt_beforee1wsohm.
+
+              WHEN 9999.  "limit of 9999
+                ls_idoc_data-docnum    = ls_idoc_contrl-docnum.
+                lv_segnum = lv_segnum + 1.
+                ls_newidoc_data-segnum    = lv_segnum.
+                ls_newidoc_data-mandt     = sy-mandt.
+                ls_newidoc_data-segnam    = 'E1EDS01'.
+                ls_e1eds01-waerq = 'EUR'.
+                MOVE ls_e1eds01 TO ls_newidoc_data-sdata.
+                APPEND ls_newidoc_data TO lt_newidoc_data.
+
+                CALL FUNCTION 'MASTER_IDOC_DISTRIBUTE'
+                  EXPORTING
+                    master_idoc_control            = f_idoc_header
+                  TABLES
+                    communication_idoc_control     = lt_docnum
+                    master_idoc_data               = lt_newidoc_data
+                  EXCEPTIONS
+                    error_in_idoc_control          = 1
+                    error_writing_idoc_status      = 2
+                    error_in_idoc_data             = 3
+                    sending_logical_system_unknown = 4
+                    OTHERS                         = 5.
+
+                IF ( sy-subrc IS INITIAL ).
+                  CALL FUNCTION 'EDI_DOCUMENT_DEQUEUE_LATER'
+                    EXPORTING
+                      docnum                 = lt_docnum-docnum
+                    EXCEPTIONS
+                      idoc_is_not_to_dequeue = 1.
+                  COMMIT WORK.
+
+                  lv_idoccount = lv_idoccount + 1.
+                ENDIF.
+
+                CLEAR : lv_count_e1wsohm.
+                lt_newidoc_data = lt_beforee1wsohm.
+                lv_segnum = lv_segnum_newidoc.
+              WHEN OTHERS.
+
+            ENDCASE.
+            lv_count_e1wsohm = lv_count_e1wsohm + 1.
+          ENDIF.
+
+          lv_segnum = lv_segnum + 1.
+          <fs_generate_idoc>-segnum = lv_segnum.
+          APPEND <fs_generate_idoc> TO  lt_newidoc_data.
+        ENDLOOP.
+
+        ls_idoc_data-docnum    = ls_idoc_contrl-docnum.
+        lv_segnum = lv_segnum + 1.
+        ls_newidoc_data-segnum = lv_segnum.
+        ls_newidoc_data-mandt  = sy-mandt.
+        ls_newidoc_data-segnam = 'E1EDS01'.
+        ls_e1eds01-waerq = 'EUR'.
+        MOVE ls_e1eds01 TO ls_newidoc_data-sdata.
+        APPEND ls_newidoc_data TO lt_newidoc_data.
+
+        CALL FUNCTION 'MASTER_IDOC_DISTRIBUTE'
+          EXPORTING
+            master_idoc_control            = f_idoc_header
+          TABLES
+            communication_idoc_control     = lt_docnum
+            master_idoc_data               = lt_newidoc_data
+          EXCEPTIONS
+            error_in_idoc_control          = 1
+            error_writing_idoc_status      = 2
+            error_in_idoc_data             = 3
+            sending_logical_system_unknown = 4
+            OTHERS                         = 5.
+        IF ( sy-subrc IS INITIAL ).
+          CALL FUNCTION 'EDI_DOCUMENT_DEQUEUE_LATER'
+            EXPORTING
+              docnum                 = lt_docnum-docnum
+            EXCEPTIONS
+              idoc_is_not_to_dequeue = 1.
+          COMMIT WORK.
+
+          lv_idoccount = lv_idoccount + 1.
+        ENDIF.
+
+        REFRESH : lt_idoc_data_temp, lt_docnum, lt_newidoc_data.
+        CLEAR: lv_count_split , f_idoc_header.
+
+      ENDIF.
+    ENDLOOP.
+  ENDLOOP.
+
+  IF ( lv_count_split GE 1 AND
+       lv_xmlcsv EQ 'X' ).
+*{INSERT - 27/08/2021
+*    Bug : f_idoc_header peut être vide si lv_count_split n'a jamais été
+*          plus grand que lv_maxsplit
+    f_idoc_header-mandt    = sy-mandt.
+    f_idoc_header-direct   = '1'.
+    f_idoc_header-rcvpor   = lv_rcvpor.
+    f_idoc_header-rcvprt   = lv_rcvprt.
+    f_idoc_header-rcvprn   = lv_rcvprn.
+    f_idoc_header-rcvpfc   = lv_rcvpfc.
+    f_idoc_header-sndpor   = lv_sndpor.
+    f_idoc_header-sndprt   = lv_sndprt.
+    f_idoc_header-sndprn   = lv_sndprn.
+    f_idoc_header-sndpfc   = lv_sndpfc.
+    f_idoc_header-idoctp   = c_pricat_03.
+    f_idoc_header-mestyp   = 'PRICAT'.
+    f_idoc_header-cimtyp   = 'ZPRICAT03'.
+    f_idoc_header-serial   = sy-datum.
+    f_idoc_header-serial+8 = sy-uzeit.
+
+    CLEAR : lv_segnum, lv_count_e1wsohm.
+    LOOP AT lt_idoc_data_temp ASSIGNING <fs_generate_idoc>.
+      IF ( <fs_generate_idoc>-segnam EQ 'E1WSOHM' ).
+        CASE lv_count_e1wsohm.
+          WHEN 0.
+            DESCRIBE TABLE lt_beforee1wsohm LINES lv_segnum_newidoc.
+            lt_newidoc_data = lt_beforee1wsohm.
+
+          WHEN 9999.  "limit of 9999
+            ls_idoc_data-docnum    = ls_idoc_contrl-docnum.
+            lv_segnum = lv_segnum + 1.
+            ls_newidoc_data-segnum    = lv_segnum.
+            ls_newidoc_data-mandt     = sy-mandt.
+            ls_newidoc_data-segnam    = 'E1EDS01'.
+            ls_e1eds01-waerq = 'EUR'.
+            MOVE ls_e1eds01 TO ls_newidoc_data-sdata.
+            APPEND ls_newidoc_data TO lt_newidoc_data.
+
+            CALL FUNCTION 'MASTER_IDOC_DISTRIBUTE'
+              EXPORTING
+                master_idoc_control            = f_idoc_header
+              TABLES
+                communication_idoc_control     = lt_docnum
+                master_idoc_data               = lt_newidoc_data
+              EXCEPTIONS
+                error_in_idoc_control          = 1
+                error_writing_idoc_status      = 2
+                error_in_idoc_data             = 3
+                sending_logical_system_unknown = 4
+                OTHERS                         = 5.
+
+            IF ( sy-subrc IS INITIAL ).
+              CALL FUNCTION 'EDI_DOCUMENT_DEQUEUE_LATER'
+                EXPORTING
+                  docnum                 = lt_docnum-docnum
+                EXCEPTIONS
+                  idoc_is_not_to_dequeue = 1.
+              COMMIT WORK.
+
+              lv_idoccount = lv_idoccount + 1.
+            ENDIF.
+
+            CLEAR : lv_count_e1wsohm.
+            lt_newidoc_data = lt_beforee1wsohm.
+            lv_segnum = lv_segnum_newidoc.
+          WHEN OTHERS.
+
+        ENDCASE.
+        lv_count_e1wsohm = lv_count_e1wsohm + 1.
+      ENDIF.
+
+      lv_segnum = lv_segnum + 1.
+      <fs_generate_idoc>-segnum = lv_segnum.
+      APPEND <fs_generate_idoc> TO  lt_newidoc_data.
+    ENDLOOP.
+
+*INSERT}
+    ls_idoc_data-docnum    = ls_idoc_contrl-docnum.
+    lv_segnum = lv_segnum + 1.
+    ls_newidoc_data-segnum = lv_segnum.
+    ls_newidoc_data-mandt  = sy-mandt.
+    ls_newidoc_data-segnam = 'E1EDS01'.
+    ls_e1eds01-waerq = 'EUR'.
+    MOVE ls_e1eds01 TO ls_newidoc_data-sdata.
+    APPEND ls_newidoc_data TO lt_newidoc_data.
+
+    CALL FUNCTION 'MASTER_IDOC_DISTRIBUTE'
+      EXPORTING
+        master_idoc_control            = f_idoc_header
+      TABLES
+        communication_idoc_control     = lt_docnum
+        master_idoc_data               = lt_newidoc_data
+      EXCEPTIONS
+        error_in_idoc_control          = 1
+        error_writing_idoc_status      = 2
+        error_in_idoc_data             = 3
+        sending_logical_system_unknown = 4
+        OTHERS                         = 5.
+    IF ( sy-subrc IS INITIAL ).
+      CALL FUNCTION 'EDI_DOCUMENT_DEQUEUE_LATER'
+        EXPORTING
+          docnum                 = lt_docnum-docnum
+        EXCEPTIONS
+          idoc_is_not_to_dequeue = 1.
+      COMMIT WORK.
+    ENDIF.
+  ENDIF.
+
+
+  CASE lv_xmlcsv.
+    WHEN 'C' OR 'A'. .      " CSV OUTPUT
+      "for debugging : Begin ->
+*      data test TYPE TABLE OF edidd.
+*      LOOP AT lt_idoc_data ASSIGNING FIELD-SYMBOL(<fs_append>).
+*        DO 20 TIMES.
+*          APPEND <fs_append> TO test.
+*        ENDDO.
+*     ENDLOOP.
+*      lt_idoc_data[] = test[].
+      "for debugging : End <-
+
+*      PERFORM idocdata2csv TABLES lt_idoc_data USING lv_xmlcsv lv_email lv_corps lv_objet lv_desc_att it_corps.                          "Jira 4937 (juil2021)
+      PERFORM idocdata2csv TABLES lt_idoc_data USING lv_xmlcsv lv_email lv_corps lv_objet lv_desc_att iv_csv_remove_double_quote it_corps."Jira 4937 (juil2021)
+
+    WHEN 'X'.       " XML OUTPUT
+*      CLEAR : lv_segnum,
+*              lv_count_e1wsohm.
+*
+*      LOOP AT lt_idoc_data ASSIGNING FIELD-SYMBOL(<fs_generate_idoc>).
+*
+*        IF ( <fs_generate_idoc>-segnam EQ 'E1WSOHM' ).
+*          CASE lv_count_e1wsohm.
+*            WHEN 0.
+*              DESCRIBE TABLE lt_beforee1wsohm LINES lv_segnum_newidoc.
+*              lt_newidoc_data = lt_beforee1wsohm.
+*
+*            WHEN 9999.  "limit of 9999
+***
+***        SEGMENT E1EDS01
+***
+*              ls_idoc_data-docnum    = ls_idoc_contrl-docnum.
+*              lv_segnum = lv_segnum + 1.
+*              ls_newidoc_data-segnum    = lv_segnum.
+*              ls_newidoc_data-mandt     = sy-mandt.
+*              ls_newidoc_data-segnam    = 'E1EDS01'.
+*              ls_e1eds01-waerq = 'EUR'.
+*              MOVE ls_e1eds01 TO ls_newidoc_data-sdata.
+*              APPEND ls_newidoc_data TO lt_newidoc_data.
+*
+*              CALL FUNCTION 'MASTER_IDOC_DISTRIBUTE'
+*                EXPORTING
+*                  master_idoc_control            = f_idoc_header
+*                TABLES
+*                  communication_idoc_control     = lt_docnum
+*                  master_idoc_data               = lt_newidoc_data
+*                EXCEPTIONS
+*                  error_in_idoc_control          = 1
+*                  error_writing_idoc_status      = 2
+*                  error_in_idoc_data             = 3
+*                  sending_logical_system_unknown = 4
+*                  OTHERS                         = 5.
+*
+*
+*              IF ( sy-subrc IS INITIAL ).
+*                CALL FUNCTION 'EDI_DOCUMENT_DEQUEUE_LATER'
+*                  EXPORTING
+*                    docnum                 = lt_docnum-docnum
+*                  EXCEPTIONS
+*                    idoc_is_not_to_dequeue = 1.
+*                COMMIT WORK.
+*
+*                lv_idoccount = lv_idoccount + 1.
+*              ENDIF.
+*
+*              CLEAR : lv_count_e1wsohm.
+*              lt_newidoc_data = lt_beforee1wsohm.
+*              lv_segnum = lv_segnum_newidoc.
+*
+*            WHEN OTHERS.
+*
+*          ENDCASE.
+*          lv_count_e1wsohm = lv_count_e1wsohm + 1.
+*        ENDIF.
+*        lv_segnum = lv_segnum + 1.
+*        <fs_generate_idoc>-segnum = lv_segnum.
+*        APPEND <fs_generate_idoc> TO  lt_newidoc_data.
+*      ENDLOOP.
+*
+***
+***        SEGMENT E1EDS01
+***
+*      ls_idoc_data-docnum    = ls_idoc_contrl-docnum.
+*
+*      lv_segnum = lv_segnum + 1.
+*      ls_newidoc_data-segnum = lv_segnum.
+*      ls_newidoc_data-mandt  = sy-mandt.
+*      ls_newidoc_data-segnam = 'E1EDS01'.
+*      ls_e1eds01-waerq = 'EUR'.
+*      MOVE ls_e1eds01 TO ls_newidoc_data-sdata.
+*      APPEND ls_newidoc_data TO lt_newidoc_data.
+*
+*      CALL FUNCTION 'MASTER_IDOC_DISTRIBUTE'
+*        EXPORTING
+*          master_idoc_control            = f_idoc_header
+*        TABLES
+*          communication_idoc_control     = lt_docnum
+*          master_idoc_data               = lt_newidoc_data
+*        EXCEPTIONS
+*          error_in_idoc_control          = 1
+*          error_writing_idoc_status      = 2
+*          error_in_idoc_data             = 3
+*          sending_logical_system_unknown = 4
+*          OTHERS                         = 5.
+*      IF ( sy-subrc IS INITIAL ).
+*        CALL FUNCTION 'EDI_DOCUMENT_DEQUEUE_LATER'
+*          EXPORTING
+*            docnum                 = lt_docnum-docnum
+*          EXCEPTIONS
+*            idoc_is_not_to_dequeue = 1.
+*        COMMIT WORK.
+*
+*        lv_idoccount = lv_idoccount + 1.
+*      ENDIF.
+*
+*
+*      CALL FUNCTION 'POPUP_TO_DISPLAY_TEXT_LO'
+*        EXPORTING
+*          titel        = 'Information'
+*          textline1    = 'Traitement terminé !'
+*          textline2    = space
+*          textline3    = lv_idoccount && ' idoc de type PRICAT03 généré(s)'
+*          start_column = 15
+*          start_row    = 6.
+
+  ENDCASE.
+
+ENDFUNCTION.
+
+
+FORM idocdata2csv TABLES lt_data STRUCTURE edidd USING lv_xmlcsvalv TYPE flag
+                                                       lv_email TYPE zsd_receivers
+                                                       lv_corps TYPE so_text255
+                                                       lv_obj   TYPE so_obj_des
+                                                       lv_desc  TYPE so_obj_des
+                                                       iv_csv_remove_double_quote "Jira 4937 (juil2021)
+                                                                TYPE abap_bool    "Jira 4937 (juil2021)
+                                                       it_corps TYPE soli_tab.
+
+  DATA : lv_count_lines TYPE sy-tabix.
+
+  DATA : lo_si_cadencier_outb TYPE REF TO zpico_si_cadencier_outb,
+         ls_header            TYPE zpiline_int014d_sapcadencier_header,
+         ls_line              TYPE zpiline_int014d_sapcadencier_lines,
+         ls_total             TYPE  zpiline_int014d_sapcadencier_total,
+         ls_output            TYPE zpimtint014d_sapcadencier,
+         ls_e1adrm1           TYPE e1adrm1,
+         ls_e1maram           TYPE e1maram.
+
+
+*** BEGIN OF SAVANGY_IZ-5202 --
+*  TRY.
+*      CREATE OBJECT lo_si_cadencier_outb.
+*    CATCH cx_ai_system_fault INTO DATA(lo_exception).
+*      MESSAGE lo_exception TYPE 'E'.
+*  ENDTRY.
+*** END OF SAVANGY_IZ-5202 --
+
+  " generate title header record
+  PERFORM idocdata2csv_init_header CHANGING ls_output.
+
+  LOOP AT lt_data INTO DATA(ls_data).
+
+    CASE ls_data-segnam.
+      WHEN 'E1ADRM1'.
+        ls_e1adrm1 = ls_data-sdata.
+        IF ( ls_e1adrm1-partner_q EQ 'MR' ).
+          " generate header record
+          PERFORM idocdata2csv_load_header USING ls_e1adrm1 CHANGING ls_header ls_output.
+          " generate title line record
+          PERFORM idocdata2csv_init_line CHANGING ls_output.
+        ENDIF.
+
+      WHEN 'E1MARAM'.
+        " count lines for total record
+        lv_count_lines = lv_count_lines + 1.
+        ls_e1maram = ls_data-sdata.
+        " generate line record
+        PERFORM idocdata2csv_load_line TABLES lt_data USING ls_e1maram ls_e1adrm1 sy-tabix CHANGING ls_output.
+
+
+      WHEN OTHERS.
+    ENDCASE.
+
+  ENDLOOP.
+  "f_convert_to_csv
+
+*  PERFORM idoc2csv_load_data USING ls_output-mtint014d_sapcadencier-lines.
+  " generate title total record
+  PERFORM idocdata2csv_init_total CHANGING ls_output.
+  " generate total record
+  PERFORM idocdata2csv_load_total USING lv_count_lines ls_header
+                                  CHANGING ls_output.
+
+*  DATA: itab1 TYPE truxs_t_text_data.
+*  CALL FUNCTION 'SAP_CONVERT_TO_CSV_FORMAT'
+*  EXPORTING
+*    I_FIELD_SEPERATOR = ';'
+*    I_LINE_HEADER = 'X'
+*    TABLES
+*      I_TAB_SAP_DATA        = ls_output-mtint014d_sapcadencier-lines
+*    CHANGING
+*      I_TAB_CONVERTED_DATA = itab1
+*    EXCEPTIONS
+*     CONVERSION_FAILED    = 1
+*      OTHERS               = 2.
+
+
+
+  IF lv_xmlcsvalv = 'A'.
+    PERFORM f_display_alv USING  ls_output-mtint014d_sapcadencier-lines.
+
+  ELSEIF lv_xmlcsvalv = 'C'.
+    PERFORM f_send_email USING  ls_output-mtint014d_sapcadencier-lines
+                                ls_output-mtint014d_sapcadencier-header
+                                ls_output-mtint014d_sapcadencier-total
+                                lv_email lv_corps lv_obj lv_desc
+                                iv_csv_remove_double_quote "Jira 4937 (Juil2021)
+                                it_corps.
+*PERFORM f_send_email USING  ls_output-mtint014d_sapcadencier lv_email lv_corps lv_obj lv_desc.
+*    OPEN DATASET '/usr/sap/DEV/D00/data/CSV_FILE_cad_cli.csv' FOR OUTPUT IN TEXT MODE ENCODING DEFAULT.
+*    LOOP AT gt_csv_file INTO DATA(ls_csv_file).
+*      TRANSFER ls_csv_file TO '/usr/sap/DEV/D00/data/CSV_FILE_cad_cli.csv'.
+*    ENDLOOP.
+*    CLOSE DATASET '/usr/sap/DEV/D00/data/CSV_FILE_cad_cli.csv'.
+
+  ENDIF.
+
+*** BEGIN OF SAVANGY_IZ-5202 --
+*  TRY.
+*      CALL METHOD lo_si_cadencier_outb->si_cadencier_outb
+*        EXPORTING
+*          output = ls_output.
+*    CATCH cx_ai_system_fault INTO lo_exception.
+*      MESSAGE lo_exception TYPE 'E'.
+*  ENDTRY.
+*** END OF SAVANGY_IZ-5202 --
+
+  COMMIT WORK.
+
+ENDFORM.
+
+
+
+
+FORM idocdata2csv_init_header CHANGING ls_output TYPE zpimtint014d_sapcadencier.
+
+  DATA : ls_header   TYPE zpiline_int014d_sapcadencier_header,
+         ls_csv_file TYPE s_csv_file.
+
+  ls_header-nc = 'NC'.
+  ls_header-no_cadencier = 'NO_CADENCIER'.
+  ls_header-date_heure_generation = 'DATE_HEURE_GENERATION'.
+  ls_header-no_magasin = 'NO_MAGASIN'.
+  ls_header-nom_magasin = 'NOM_MAGASIN'.
+  CONCATENATE  ls_header-no_cadencier ls_header-date_heure_generation ls_header-no_magasin ls_header-nom_magasin
+  INTO ls_csv_file SEPARATED BY ';'.
+  APPEND ls_csv_file TO gt_csv_file.
+
+
+  APPEND ls_header TO ls_output-mtint014d_sapcadencier-header.
+
+ENDFORM.
+
+FORM idocdata2csv_load_header
+  USING ls_e1adrm1 TYPE e1adrm1
+  CHANGING ls_header TYPE zpiline_int014d_sapcadencier_header
+           ls_output TYPE zpimtint014d_sapcadencier.
+
+  DATA : lv_day(2)      TYPE c,
+         lv_month(2)    TYPE c,
+         lv_year(2)     TYPE c,
+         lv_output_date TYPE string.
+
+  lv_day = sy-datum+6(2).
+  lv_month = sy-datum+4(2).
+  lv_year = sy-datum+2(2).
+  lv_output_date = |{ lv_day }| && |{ lv_month }| && |{ lv_year }| && |{ sy-uzeit }|.
+
+  ls_header-nc = 'N'.
+  ls_header-no_cadencier = '0'.
+  ls_header-date_heure_generation = lv_output_date.
+  ls_header-no_magasin = ls_e1adrm1-partner_id.
+  ls_header-nom_magasin = ls_e1adrm1-name1.
+
+  APPEND ls_header TO ls_output-mtint014d_sapcadencier-header.
+
+ENDFORM.
+
+FORM  idocdata2csv_init_line CHANGING ls_output TYPE zpimtint014d_sapcadencier.
+
+  DATA : ls_line     TYPE zpiline_int014d_sapcadencier_lines,
+         ls_csv_file TYPE edi_sdata.
+
+  ls_line-no_fournisseur = 'NO_FOURNISSEUR'.
+  ls_line-nom_fournisseur = 'NOM_FOURNISSEUR'.
+  ls_line-nom_fournisseur_fabricant = 'NOM_FOURNISSEUR_FABRICANT'.
+  ls_line-rayon = 'RAYON'.
+  ls_line-famille = 'FAMILLE'.
+  ls_line-sous_famille = 'SOUS_FAMILLE'.
+  ls_line-unite_de_besoin = 'UNITE_DE_BESOIN'.
+  ls_line-pdt_supprime_nouveau = 'PDT_SUPPRIME_NOUVEAU'.
+  ls_line-code_interne = 'CODE_INTERNE'.
+  ls_line-ean13 = 'EAN13'.
+  ls_line-ref_fournisseur = 'REF_FOURNISSEUR'.
+  ls_line-code_secteur = 'CODE_SECTEUR'.
+  ls_line-designation_produit11 = 'DESIGNATION_PRODUIT11'.
+  ls_line-designation_produit12 = 'DESIGNATION_PRODUIT12'.
+  ls_line-designation_produit13 = 'DESIGNATION_PRODUIT13'.
+  ls_line-taille1 = 'TAILLE1'.
+  ls_line-couleur1 = 'COULEUR1'.
+  ls_line-modele1 = 'MODELE1'.
+  ls_line-designation_produit21 = 'DESIGNATION_PRODUIT21'.
+  ls_line-designation_produit22 = 'DESIGNATION_PRODUIT22'.
+  ls_line-taille2 = 'TAILLE2'.
+  ls_line-couleur2 = 'COULEUR2'.
+  ls_line-sticker2 = 'STICKER2'.
+  ls_line-typologie = 'TYPOLOGIE'.
+  ls_line-minimum_cde = 'MINIMUM_CDE'.
+  ls_line-unite_de_commande = 'UNITE_DE_COMMANDE'.
+  ls_line-pcb = 'PCB'.
+  ls_line-nb_colis_couche = 'NB_COLIS_COUCHE'.
+  ls_line-nb_colis_palette = 'NB_COLIS_PALETTE'.
+  ls_line-contenance = 'CONTENANCE'.
+  ls_line-unite_contenance = 'UNITE_CONTENANCE'.
+  ls_line-poids = 'POIDS'.
+  ls_line-unite_poids = 'UNITE_POIDS'.
+  ls_line-poids_colis = 'POIDS_COLIS'.
+  ls_line-volume_colis = 'VOLUME_COLIS'.
+  ls_line-dlcf = 'DLCF'.
+  ls_line-qualification = 'QUALIFICATION'.
+  ls_line-code_po = 'CODE_PO'.
+  ls_line-pays_origine = 'PAYS_ORIGINE'.
+  ls_line-pa_net = 'PA_NET'.
+  ls_line-pa_srp = 'PA_SRP'.
+  ls_line-nom_douaniere = 'NOM_DOUANIERE'.
+  ls_line-tarif_integre = 'TARIF_INTEGRE'.
+  ls_line-add1 = 'ADD1'.
+  ls_line-add2 = 'ADD2'.
+  ls_line-compl_nomenc = 'COMPL_NOMENC'.
+  ls_line-unite_de_vente = 'UNITE_DE_VENTE'.
+*
+  CONCATENATE ls_line-no_fournisseur
+              ls_line-nom_fournisseur
+              ls_line-nom_fournisseur_fabricant
+              ls_line-rayon
+              ls_line-famille
+              ls_line-sous_famille
+              ls_line-unite_de_besoin
+              ls_line-pdt_supprime_nouveau
+              ls_line-code_interne
+              ls_line-ean13
+              ls_line-ref_fournisseur
+              ls_line-code_secteur
+              ls_line-designation_produit11
+              ls_line-designation_produit12
+              ls_line-designation_produit13
+              ls_line-taille1
+              ls_line-couleur1
+              ls_line-modele1
+              ls_line-designation_produit21
+              ls_line-designation_produit22
+              ls_line-taille2
+              ls_line-couleur2
+              ls_line-sticker2
+              ls_line-typologie
+              ls_line-minimum_cde
+              ls_line-unite_de_commande
+              ls_line-pcb
+              ls_line-nb_colis_couche
+              ls_line-nb_colis_palette
+              ls_line-contenance
+              ls_line-unite_contenance
+              ls_line-poids
+              ls_line-unite_poids
+              ls_line-poids_colis
+              ls_line-volume_colis
+              ls_line-dlcf
+              ls_line-qualification
+              ls_line-code_po
+              ls_line-pays_origine
+              ls_line-pa_net
+              ls_line-pa_srp
+              ls_line-nom_douaniere
+              ls_line-tarif_integre
+              ls_line-add1
+              ls_line-add2
+              ls_line-compl_nomenc
+              ls_line-unite_de_vente
+              INTO ls_csv_file SEPARATED BY ';'.
+
+  APPEND ls_csv_file TO gt_csv_file.
+  APPEND ls_line TO ls_output-mtint014d_sapcadencier-lines.
+
+ENDFORM.
+
+FORM  idocdata2csv_load_line
+  TABLES lt_data STRUCTURE edidd
+  USING ls_e1maram TYPE e1maram
+        ls_e1adrm1 TYPE e1adrm1
+        lv_index_e1maram TYPE sy-tabix
+  CHANGING ls_output TYPE zpimtint014d_sapcadencier.
+
+  DATA : ls_line          TYPE zpiline_int014d_sapcadencier_lines,
+         ls_line_csv      TYPE zpiline_int014d_sapcadencier_lines,
+         ls_e1priausp     TYPE e1priausp,
+         ls_e1maktm       TYPE e1maktm,
+         ls_csv_file      TYPE s_csv_file,
+         lv_tabix         TYPE sy-tabix,
+         lv_count_e1pkomg TYPE sy-tabix,
+         ls_e1konp        TYPE e1konp,
+         ls_e1mtxlm       TYPE e1mtxlm,
+         ls_e1konm        TYPE e1konm,
+         ls_e1konm_bis    TYPE e1konm,
+         ls_e1mtxhm       TYPE e1mtxhm,
+*         ls_e1mtxlm       TYPE e1mtxlm,
+         lv_name_four     TYPE name1,
+         lv_tabix_e1konp  TYPE sy-tabix,
+         ls_e1pmarm       TYPE e1pmarm,
+         ls_e1marcm       TYPE e1marcm,
+         lv_addline       TYPE boolean.
+
+
+  DATA : lv_nb_colis_couche  TYPE zpiline_int014d_sapcadencier_lines-nb_colis_couche,
+         lv_nb_colis_palette TYPE zpiline_int014d_sapcadencier_lines-nb_colis_palette.
+
+  DATA : l_cdbase            TYPE zmm_bcp_rcmval-cdbase.
+  DATA: BEGIN OF ls_zmm_bcp_rcmval,
+          cdintfrn TYPE zmm_bcp_rcmval-cdintfrn,
+          numrgp   TYPE zmm_bcp_rcmval-numrgp,
+          numbar   TYPE zmm_bcp_rcmval-numbar,
+        END   OF ls_zmm_bcp_rcmval.
+
+  CLEAR : ls_line.
+  ls_line-ean13 = ls_e1maram-ean11.
+*  ls_line-dlcf = ls_e1maram-mhdrz.
+  ls_line-code_interne = ls_e1maram-matnr.
+
+  DATA lv_lang TYPE sy-langu.
+  lv_lang = 'E'.
+  SELECT SINGLE spras
+    INTO lv_lang
+    FROM kna1
+    WHERE kunnr = ls_e1adrm1-partner_id.
+
+  SELECT SINGLE maktx
+    INTO @DATA(lv_makt)
+    FROM makt
+    WHERE matnr = @ls_e1maram-matnr
+    AND spras = @lv_lang.
+
+  SELECT SINGLE herkl, inhal, inhme
+    INTO @DATA(lv_mara)
+    FROM mara
+    WHERE matnr = @ls_e1maram-matnr.
+  IF ( sy-subrc IS INITIAL ).
+    ls_line-designation_produit11 = lv_makt.
+    ls_line-contenance = lv_mara-inhal.
+    ls_line-unite_contenance = lv_mara-inhme.
+  ENDIF.
+
+  SELECT SINGLE t1~lifnr, t1~idnlf, t1~mfrnr, t1~urzla, t2~minbm, t2~bprme
+    INTO @DATA(lv_eina_1)
+    FROM eina AS t1 INNER JOIN eine AS t2 ON t1~infnr = t2~infnr
+    WHERE matnr = @ls_e1maram-matnr
+    AND relif = 'X'.
+  IF ( sy-subrc IS NOT INITIAL ).
+    SELECT SINGLE t1~lifnr, t1~idnlf, t1~mfrnr, t1~urzla, t2~minbm, t2~bprme
+      INTO @DATA(lv_eina_2)
+      FROM eina AS t1 INNER JOIN eine AS t2 ON t1~infnr = t2~infnr
+      WHERE matnr = @ls_e1maram-matnr.
+  ENDIF.
+
+  DATA(lv_eina) = COND #( WHEN lv_eina_1 IS INITIAL  THEN lv_eina_2
+                          ELSE lv_eina_1 ).
+
+  IF ( lv_eina IS NOT INITIAL ).
+    ls_line-no_fournisseur = lv_eina-lifnr.
+    ls_line-ref_fournisseur = lv_eina-idnlf.
+    ls_line-minimum_cde = lv_eina-minbm.
+    ls_line-unite_de_vente = lv_eina-bprme.
+
+    SELECT SINGLE name1
+      INTO @DATA(lv_name1)
+      FROM lfa1
+      WHERE lifnr = @lv_eina-lifnr.
+    IF ( sy-subrc IS INITIAL ).
+*      ls_line-nom_fournisseur = lv_name1.
+    ENDIF.
+
+    SELECT SINGLE name1
+      INTO @DATA(lv_name2)
+      FROM lfa1
+      WHERE lifnr = @lv_eina-mfrnr.
+    IF ( sy-subrc IS INITIAL ).
+*                    ls_line-nom_fournisseur_fabricant = lv_name2.
+    ENDIF.
+  ENDIF.
+
+  lv_index_e1maram = lv_index_e1maram + 1.
+  LOOP AT lt_data INTO DATA(ls_data) FROM lv_index_e1maram.
+    CASE ls_data-segnam.
+      WHEN 'E1PRIAUSP'.
+        ls_e1priausp = ls_data-sdata.
+        CASE ls_e1priausp-characteristic.
+          WHEN 'RAYON'.
+            ls_line-rayon = ls_e1priausp-description.
+          WHEN 'FAMILLE_GESTION'.
+            ls_line-famille = ls_e1priausp-description.
+          WHEN 'SOUS_FAMILLE_GESTION'.
+            ls_line-sous_famille = ls_e1priausp-description.
+            ls_line-unite_de_besoin = ls_e1priausp-description.
+          WHEN 'CODE_MARQUE'.
+            ls_line-qualification = ls_e1priausp-description.
+          WHEN 'NOMENCLATURE_DOUANE'.
+*retrieve nomenclature douaniere from marc
+            ls_line-nom_douaniere = ls_e1priausp-description_long.
+          WHEN 'CRP_2345'.
+            ls_line-designation_produit13 = ls_e1priausp-description_long.
+          WHEN 'PRDUNITTYPE'.                   "Added by JIRA 4567 & 4568
+            IF ls_e1priausp-description NE 'U'.
+              ls_line-unite_de_vente = 'K'.
+              ls_line-unite_de_commande = 'K'.
+            ELSE.
+              ls_line-unite_de_vente = 'A'.
+              ls_line-unite_de_commande = 'A'.
+            ENDIF.
+        ENDCASE.
+
+      WHEN 'E1MAKTM'.
+        ls_e1maktm = ls_data-sdata.
+        IF ( ls_e1maktm-spras EQ sy-langu ).
+          ls_line-designation_produit11 = ls_e1maktm-maktx.
+          ls_line-designation_produit21 = ls_e1maktm-maktx.
+        ENDIF.
+
+      WHEN 'E1PMARM'.
+        ls_e1pmarm  = ls_data-sdata.
+        IF ( ls_e1pmarm-pcode_1 = 'G' ).
+          ls_line-nb_colis_palette = ls_e1pmarm-umrez.
+          lv_nb_colis_palette = ls_line-nb_colis_palette.
+        ELSEIF ( ls_e1pmarm-pcode_1 = 'I' ).
+          ls_line-nb_colis_couche = ls_e1pmarm-umrez.
+          lv_nb_colis_couche = ls_line-nb_colis_couche.
+        ELSEIF ( ls_e1pmarm-pcode_1 = 'K' AND ls_e1pmarm-meinh NE 'KGM').
+
+*          DATA lv_format TYPE char9.
+*          lv_format = ls_e1pmarm-brgew.
+*          DO.
+*            IF strlen( lv_format ) = 9.
+*              EXIT.
+*            ELSE.
+*              CONCATENATE '0'  lv_format INTO lv_format.
+*            ENDIF.
+*          ENDDO.
+*          ls_line-poids_colis = lv_format.
+*
+**          ls_line-volume_colis = ls_e1pmarm-volum / 1000.
+*          DATA : lv_format2 TYPE char10,
+*                 wa_output  TYPE p DECIMALS 4,
+*                 lv_volume  TYPE float.
+*
+*          lv_volume = ls_e1pmarm-volum / 1000.
+*          CALL FUNCTION 'ROUND'
+*            EXPORTING
+*              input  = lv_volume
+*            IMPORTING
+*              output = wa_output.
+*          lv_format2 = wa_output.
+*          CONDENSE lv_format2.
+*          DO.
+*            IF strlen( lv_format2 ) = 10.
+*              EXIT.
+*            ELSE.
+*              CONCATENATE '0'  lv_format2 INTO lv_format2.
+*            ENDIF.
+*          ENDDO.
+*          ls_line-volume_colis = lv_format2.
+*          ls_line-poids = ls_e1maram-ntgew.          .
+*          ls_line-unite_poids = ls_e1pmarm-gewei.
+*          IF ls_line-unite_poids = 'KGM'.
+*            ls_line-unite_poids = 'K'.
+*          ENDIF.
+*          ls_line-pcb = ls_e1pmarm-umrez.
+        ENDIF.
+      WHEN 'E1PKOMG'.
+        DATA : ls_data_marm        TYPE marm,
+               ls_data_marm_pal    TYPE marm,
+               ls_data_marm_couche TYPE marm,
+               lt_data_marm        TYPE TABLE OF marm,
+               ls_data_e1pkomg     TYPE e1pkomg,
+               lv_pcb_meinh        TYPE marm-meinh.
+        ls_data_e1pkomg = ls_data-sdata.
+
+        lv_tabix = sy-tabix.
+        lv_count_e1pkomg = lv_count_e1pkomg + 1 .
+
+        SELECT *
+          FROM marm
+          INTO TABLE lt_data_marm
+          WHERE matnr = ls_data_e1pkomg-matnr.        IF sy-subrc = 0.
+***CAS DES UNITES DE VENTE EN SOUS PCB
+**Si l'article est géré avec un sous PCB, il faut considérer le PCB de l'unité sous PCB
+        CLEAR ls_data_marm.   " added by GPi 29.01.2021
+
+        DATA lv_mesub TYPE marm-meinh.
+        READ TABLE lt_data_marm INTO ls_data_marm WITH KEY meinh = ls_data_e1pkomg-vrkme.
+        IF NOT ls_data_marm-mesub IS INITIAL.
+          lv_mesub = ls_data_marm-mesub.
+          READ TABLE lt_data_marm INTO ls_data_marm WITH KEY meinh = lv_mesub.
+          IF ( sy-subrc IS INITIAL ).
+            SELECT SINGLE meins
+              INTO @DATA(lv_meins)
+              FROM eina
+              WHERE matnr = @ls_data_e1pkomg-matnr
+              AND   meins = @lv_mesub .
+            IF ( sy-subrc IS INITIAL ).
+              lv_pcb_meinh = lv_mesub.
+            ELSE.
+              lv_pcb_meinh = ls_data_e1pkomg-vrkme.
+            ENDIF.
+          ELSE.
+            lv_pcb_meinh = ls_data_e1pkomg-vrkme.
+          ENDIF.
+        ELSE.
+          lv_pcb_meinh = ls_data_e1pkomg-vrkme.
+        ENDIF.
+
+        SELECT SINGLE meins
+          INTO @DATA(lv_control)
+          FROM eina
+          WHERE matnr = @ls_data_e1pkomg-matnr
+          AND   meins = @lv_pcb_meinh.
+        IF ( sy-subrc IS INITIAL ).
+          lv_addline = abap_true.
+        ELSE.
+          lv_addline = abap_false.
+        ENDIF.
+
+        READ TABLE lt_data_marm INTO ls_data_marm WITH KEY
+        matnr = ls_e1maram-matnr
+        meinh = lv_pcb_meinh.
+*          READ TABLE lt_data_marm INTO ls_data_marm WITH KEY meinh = ls_data_e1pkomg-vrkme.
+*        SELECT SINGLE * FROM marm INTO ls_data_marm WHERE matnr = ls_data_e1pkomg-matnr AND meinh = ls_data_e1pkomg-vrkme.
+        IF sy-subrc = 0.
+          ls_line-pcb = ls_data_marm-umrez.
+          DATA lv_format TYPE char9.
+          lv_format = ls_data_marm-brgew.
+          DO.
+            IF strlen( lv_format ) = 9.
+              EXIT.
+            ELSE.
+              CONCATENATE '0'  lv_format INTO lv_format.
+              CONDENSE lv_format NO-GAPS.
+            ENDIF.
+          ENDDO.
+          ls_line-poids_colis = lv_format.
+
+*          ls_line-volume_colis = ls_marm-volum / 1000.
+          DATA : lv_format2 TYPE char10,
+                 wa_output  TYPE p DECIMALS 4,
+                 lv_volume  TYPE float.
+
+          lv_volume = ls_data_marm-volum / 1000.
+          CALL FUNCTION 'ROUND'
+            EXPORTING
+              input  = lv_volume
+            IMPORTING
+              output = wa_output.
+          lv_format2 = wa_output.
+          CONDENSE lv_format2.
+          DO.
+            IF strlen( lv_format2 ) = 10.
+              EXIT.
+            ELSE.
+              CONCATENATE '0'  lv_format2 INTO lv_format2.
+              CONDENSE lv_format2 NO-GAPS.
+            ENDIF.
+          ENDDO.
+          ls_line-volume_colis = lv_format2.
+          ls_line-poids = ls_e1maram-ntgew.          .
+          ls_line-unite_poids = ls_data_marm-gewei.
+          IF ls_line-unite_poids = 'KGM'.
+            ls_line-unite_poids = 'K'.
+          ENDIF.
+        ENDIF.
+*CLEAR ls_data_marm.
+***READ TABLE lt_data_marm INTO ls_data_marm_couche WITH KEY mesub = ls_data_marm-meinh.
+        READ TABLE lt_data_marm INTO ls_data_marm_couche WITH KEY mesub = ls_data_e1pkomg-vrkme.
+        IF sy-subrc = 0.
+          IF ls_line-pcb IS NOT INITIAL.
+            ls_line-nb_colis_couche = ls_data_marm_couche-umrez / ls_line-pcb.
+          ENDIF.
+        ENDIF.
+        READ TABLE lt_data_marm INTO ls_data_marm_pal WITH KEY mesub = ls_data_marm_couche-meinh.
+        IF sy-subrc = 0.
+          IF ls_line-pcb IS NOT INITIAL.
+            ls_line-nb_colis_palette = ls_data_marm_pal-umrez / ls_line-pcb.
+          ENDIF.
+        ENDIF.
+        IF ls_line-nb_colis_palette IS INITIAL.
+          ls_line-nb_colis_palette = ls_line-nb_colis_couche.
+        ENDIF.
+*          ls_line-nb_colis_palette.
+*          ls_line-nb_colis_couche.
+
+      ENDIF.
+
+      LOOP AT lt_data INTO DATA(ls_data_four) FROM lv_tabix WHERE segnam = 'E1KONP'.
+        ls_e1konp = ls_data_four-sdata.
+        lv_tabix_e1konp = sy-tabix + 1.
+*          ls_e1konp = ls_data_four-sdata.
+*          IF NOT ls_e1konp-lifnr IS INITIAL.
+        ls_line-no_fournisseur = ls_e1konp-knumt . "ls_e1konp-lifnr.
+        DATA lv_infr TYPE infnr.
+        DATA lv_matnr TYPE string.
+        DATA lv_mhdrz TYPE mhdrz.
+        lv_matnr = ls_line-code_interne.
+**IZ-4645 le code fournisseur ne doit pas être en clair
+**le code fournisseur (uniquement fournisseur direct) est supprimé de l'idoc.
+**il faut le retrouver à partir du code de regroupement.
+        IF NOT ls_e1konp-knumt IS INITIAL.
+          CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+            EXPORTING
+              input  = ls_e1konp-knumt(5)
+            IMPORTING
+              output = ls_e1konp-lifnr.
+        ENDIF.
+**Fin IZ-4645
+        IF ls_e1konp-lifnr IS NOT INITIAL.
+
+          SELECT SINGLE infnr FROM eina INTO lv_infr WHERE matnr = lv_matnr AND lifnr = ls_e1konp-lifnr.
+          IF sy-subrc = 0.
+            SELECT SINGLE MIN( mhdrz ) FROM eine INTO lv_mhdrz WHERE infnr = lv_infr.
+            IF sy-subrc = 0.
+              ls_line-dlcf = lv_mhdrz.
+              CLEAR lv_mhdrz.
+            ENDIF.
+          ENDIF.
+        ELSE.
+
+          TYPES: BEGIN OF ty_infnr,
+                   infnr TYPE infnr,
+                 END OF ty_infnr,
+
+                 BEGIN OF ty_mhdrz,
+                   mhdrz TYPE mhdrz,
+                 END OF ty_mhdrz.
+
+          DATA lt_infnr TYPE TABLE OF ty_infnr.
+          DATA lt_mhdrz TYPE TABLE OF ty_mhdrz.
+
+
+          SELECT  infnr FROM eina INTO TABLE lt_infnr WHERE matnr = lv_matnr AND lifnr LIKE 'E%'.
+          IF sy-subrc = 0.
+            SELECT  mhdrz FROM eine INTO TABLE lt_mhdrz FOR ALL ENTRIES IN lt_infnr WHERE infnr = lt_infnr-infnr.
+            IF sy-subrc = 0.
+              DELETE lt_mhdrz WHERE mhdrz = 0.
+*                                        SORT lt_mhdrz ASCENDING.
+              SORT  lt_mhdrz BY  mhdrz ASCENDING .
+              READ TABLE lt_mhdrz INTO DATA(ls_mhdrz) INDEX 1.
+              ls_line-dlcf = ls_mhdrz-mhdrz.
+              CLEAR lv_mhdrz.
+            ENDIF.
+          ENDIF.
+        ENDIF.
+
+
+
+*          ENDIF.
+*          IF ls_line-no_fournisseur IS NOT INITIAL.
+*            SELECT SINGLE name1
+*            INTO lv_name_four
+*            FROM lfa1
+*            WHERE lifnr = ls_line-no_fournisseur.
+*            IF ( sy-subrc IS INITIAL ).
+*              ls_line-nom_fournisseur = lv_name_four.
+*            ENDIF.
+*          ENDIF.
+        DATA lv_no_four TYPE string.
+        lv_no_four = ls_line-no_fournisseur.
+        IF ls_line-no_fournisseur IS NOT INITIAL.
+          lv_no_four = ls_line-no_fournisseur(1) .
+        ENDIF.
+
+        IF lv_no_four = 'E' OR lv_no_four IS INITIAL.
+          READ TABLE lt_data INTO DATA(ls_data_e1konm) INDEX lv_tabix_e1konp.
+          IF sy-subrc = 0 AND ( ls_data_e1konm-segnam = 'E1KONM' OR  ls_data_e1konm-segnam = 'E1KONW' ).
+            ls_e1konm = ls_data_e1konm-sdata.
+            ls_line-pa_srp = ls_e1konm-kbetr.
+*            IF ls_line-unite_de_commande IS INITIAL.      "Added by JIRA 4567
+            ls_line-unite_de_commande = ls_line-unite_de_vente.
+*            ENDIF.
+            " minimum de commande = LS_E1KONM-KSTBM + unité LS_E1KONP-KONMS
+
+
+            IF lv_no_four = 'E' OR lv_no_four IS INITIAL.
+*            IF ls_line-no_fournisseur(1) = 'E' OR ls_line-no_fournisseur(1) IS INITIAL.
+              ls_line-minimum_cde = ls_line-pcb.
+            ELSE.
+              " convertir LS_E1KONM-KSTBM + unité LS_E1KONP-KONMS en unité de base
+              CASE ls_e1konp-konms.
+                WHEN 'PAL'.
+                  ls_line-minimum_cde = ls_e1konm-kstbm * lv_nb_colis_palette.
+                WHEN 'KAR'.
+                  ls_line-minimum_cde = ls_e1konm-kstbm * ls_line-pcb.
+                WHEN OTHERS.
+                  ls_line-minimum_cde = ls_e1konm-kstbm.
+*                  ls_line-unite_de_commande = ls_e1konp-konms.  "by 4567
+              ENDCASE.
+
+            ENDIF.
+
+          ENDIF.
+        ELSE.
+          READ TABLE lt_data INTO DATA(ls_data_e1konw) INDEX lv_tabix_e1konp + 2.
+          IF sy-subrc = 0 AND  ( ls_data_e1konw-segnam = 'E1KONM' OR  ls_data_e1konw-segnam = 'E1KONW' ).
+            ls_e1konm_bis = ls_data_e1konw-sdata.
+            ls_line-pa_srp = ls_e1konm_bis-kbetr.
+*            IF ls_line-unite_de_commande IS INITIAL.      "Added by JIRA 4567
+            ls_line-unite_de_commande = ls_line-unite_de_vente.
+*            ENDIF.
+            " minimum de commande = LS_E1KONM-KSTBM + unité LS_E1KONP-KONMS
+
+
+            IF lv_no_four = 'E' OR lv_no_four IS INITIAL.
+*            IF ls_line-no_fournisseur(1) = 'E' OR ls_line-no_fournisseur(1) IS INITIAL.
+              ls_line-minimum_cde = ls_line-pcb.
+            ELSE.
+              " convertir LS_E1KONM-KSTBM + unité LS_E1KONP-KONMS en unité de base
+              CASE ls_e1konp-konms.
+*                  WHEN 'PAL'.                                                        "disabled by JIRA 4614
+*                    ls_line-minimum_cde = ls_e1konm_bis-kstbm * lv_nb_colis_palette. "disabled by JIRA 4614
+*                  WHEN 'KAR'.                                                        "disabled by JIRA 4614
+*                    ls_line-minimum_cde = ls_e1konm_bis-kstbm * ls_line-pcb.         "disabled by JIRA 4614
+*                  WHEN OTHERS.                                                       "disabled by JIRA 4614
+*                  DATA lv_kstbm TYPE i.
+*                  DATA lv_pcb TYPE i.
+*                  MOVE ls_line-pcb To lv_pcb.
+*                  MOVE ls_e1konm_bis-kstbm TO lv_kstbm.
+                  ls_line-minimum_cde = trunc( ls_e1konm_bis-kstbm  * ls_line-pcb ).
+*                  ls_line-unite_de_commande = ls_e1konp-konms.  "by 4567
+              ENDCASE.
+
+            ENDIF.
+
+          ENDIF.
+        ENDIF.
+
+*          IF sy-subrc = 0 AND ( ls_data_e1konm-segnam = 'E1KONM' OR  ls_data_e1konm-segnam = 'E1KONW' ).
+*            ls_e1konm = ls_data_e1konm-sdata.
+*            ls_line-pa_srp = ls_e1konm-kbetr.
+**            IF ls_line-unite_de_commande IS INITIAL.      "Added by JIRA 4567
+*            ls_line-unite_de_commande = ls_line-unite_de_vente.
+**            ENDIF.
+*            " minimum de commande = LS_E1KONM-KSTBM + unité LS_E1KONP-KONMS
+*
+*
+*            IF lv_no_four = 'E' OR lv_no_four IS INITIAL.
+**            IF ls_line-no_fournisseur(1) = 'E' OR ls_line-no_fournisseur(1) IS INITIAL.
+*              ls_line-minimum_cde = ls_line-pcb.
+*            ELSE.
+*              " convertir LS_E1KONM-KSTBM + unité LS_E1KONP-KONMS en unité de base
+*              CASE ls_e1konp-konms.
+*                WHEN 'PAL'.
+*                  ls_line-minimum_cde = ls_e1konm-kstbm * lv_nb_colis_palette.
+*                WHEN 'KAR'.
+*                  ls_line-minimum_cde = ls_e1konm-kstbm * ls_line-pcb.
+*                WHEN OTHERS.
+*                  ls_line-minimum_cde = ls_e1konm-kstbm.
+**                  ls_line-unite_de_commande = ls_e1konp-konms.  "by 4567
+*              ENDCASE.
+*
+*            ENDIF.
+*
+*          ENDIF.
+**Corrections des facteurs de conversions NB_COLIS_COUCHE NB_COLIS_PALETTE
+*            ls_line-nb_colis_couche = lv_nb_colis_couche / ls_line-pcb.
+*            ls_line-nb_colis_palette = lv_nb_colis_palette / ls_line-pcb.
+
+**Pour un fournisseur direct : on remplace le code fournisseur par le code de regroupement
+*         IF lv_no_four NE 'E' AND NOT  lv_no_four IS INITIAL.
+**          IF ls_line-no_fournisseur(1) NE 'E' AND NOT ls_line-no_fournisseur(1) IS INITIAL.
+*
+*            CALL FUNCTION 'CONVERSION_EXIT_MATN1_OUTPUT'
+*              EXPORTING
+*                input  = ls_line-code_interne
+*              IMPORTING
+*                output = l_cdbase.
+*
+*            CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+*              EXPORTING
+*                input  = l_cdbase
+*              IMPORTING
+*                output = l_cdbase.
+*
+** Par sécurité, routine pour compléter le numéro article avec des 0 préalables
+*            DO.
+*              IF strlen( l_cdbase ) = 7.
+*                EXIT.
+*              ELSE.
+*                CONCATENATE '0'  l_cdbase INTO l_cdbase.
+*              ENDIF.
+*            ENDDO.
+*
+**  DATA lt_zmm_bcp_rcmval LIKE STANDARD TABLE OF ls_zmm_bcp_rcmval.
+*
+*            SELECT rcm~cdintfrn
+*                   rcm~numrgp
+*                   rcm~numbar
+*           UP TO 1 ROWS
+*            INTO   ls_zmm_bcp_rcmval
+*            FROM       zmm_bcp_rcmval   AS rcm
+*            INNER JOIN zmm_fourn_bareme AS bar
+*            ON rcm~cdintfrn = bar~cdintfrn
+*            AND rcm~numbar  = bar~numbar
+*              WHERE   rcm~cdbase    = l_cdbase
+*                AND   rcm~dtdebval <= sy-datum
+*                AND   rcm~dtfinval >  sy-datum.
+*            ENDSELECT.
+*            IF sy-subrc = 0.
+*              CONCATENATE ls_zmm_bcp_rcmval-cdintfrn ls_zmm_bcp_rcmval-numbar INTO ls_line-no_fournisseur.
+*            ENDIF.
+*          ELSE.
+*            CLEAR ls_line-no_fournisseur.
+*
+*          ENDIF.
+
+        CLEAR:  ls_line-nom_fournisseur.  "Added by JIRA 4544   ls_line-no_fournisseur,
+
+        IF ( lv_addline = abap_true ).
+          APPEND ls_line TO ls_output-mtint014d_sapcadencier-lines.
+*            CONCATENATE ls_line-no_fournisseur
+*                        ls_line-nom_fournisseur
+*                        ls_line-nom_fournisseur_fabricant
+*                        ls_line-rayon ls_line-famille
+*                        ls_line-sous_famille
+*                        ls_line-unite_de_besoin
+*                        ls_line-pdt_supprime_nouveau
+*                        ls_line-code_interne
+*                        ls_line-ean13
+*                        ls_line-ref_fournisseur
+*                        ls_line-code_secteur
+*                        ls_line-designation_produit11
+*                        ls_line-designation_produit12
+*                        ls_line-designation_produit13
+*                        ls_line-taille1
+*                        ls_line-couleur1
+*                        ls_line-modele1
+*                        ls_line-designation_produit21
+*                        ls_line-designation_produit22
+*                        ls_line-taille2
+*                        ls_line-couleur2
+*                        ls_line-sticker2
+*                        ls_line-typologie
+*                        ls_line-minimum_cde
+*                        ls_line-unite_de_commande
+*                        ls_line-pcb
+*                        ls_line-nb_colis_couche
+*                        ls_line-nb_colis_palette
+*                        ls_line-contenance
+*                        ls_line-unite_contenance
+*                        ls_line-poids
+*                        ls_line-unite_poids
+*                        ls_line-poids_colis
+*                        ls_line-volume_colis
+*                        ls_line-dlcf
+*                        ls_line-qualification
+*                        ls_line-code_po
+*                        ls_line-pays_origine
+*                        ls_line-pa_net
+*                        ls_line-pa_srp
+*                        ls_line-nom_douaniere
+*                        ls_line-tarif_integre
+*                        ls_line-add1
+*                        ls_line-add2
+*                        ls_line-compl_nomenc
+*                        ls_line-unite_de_vente INTO ls_csv_file SEPARATED BY ';'.
+*
+*            APPEND ls_csv_file TO gt_csv_file.
+        ENDIF.
+        EXIT.
+      ENDLOOP.
+
+*        SORT ls_output-mtint014d_sapcadencier-lines BY famille.
+*
+*        LOOP AT ls_output-mtint014d_sapcadencier-lines INTO ls_line_csv FROM 2.
+*
+*          CONCATENATE ls_line_csv-no_fournisseur
+*                      ls_line_csv-nom_fournisseur
+*                      ls_line_csv-nom_fournisseur_fabricant
+*                      ls_line_csv-rayon ls_line-famille
+*                      ls_line_csv-sous_famille
+*                      ls_line_csv-unite_de_besoin
+*                      ls_line_csv-pdt_supprime_nouveau
+*                      ls_line_csv-code_interne
+*                      ls_line_csv-ean13
+*                      ls_line_csv-ref_fournisseur
+*                      ls_line_csv-code_secteur
+*                      ls_line_csv-designation_produit11
+*                      ls_line_csv-designation_produit12
+*                      ls_line_csv-designation_produit13
+*                      ls_line_csv-taille1
+*                      ls_line_csv-couleur1
+*                      ls_line_csv-modele1
+*                      ls_line_csv-designation_produit21
+*                      ls_line_csv-designation_produit22
+*                      ls_line_csv-taille2
+*                      ls_line_csv-couleur2
+*                      ls_line_csv-sticker2
+*                      ls_line_csv-typologie
+*                      ls_line_csv-minimum_cde
+*                      ls_line_csv-unite_de_commande
+*                      ls_line_csv-pcb
+*                      ls_line_csv-nb_colis_couche
+*                      ls_line_csv-nb_colis_palette
+*                      ls_line_csv-contenance
+*                      ls_line_csv-unite_contenance
+*                      ls_line_csv-poids
+*                      ls_line_csv-unite_poids
+*                      ls_line_csv-poids_colis
+*                      ls_line_csv-volume_colis
+*                      ls_line_csv-dlcf
+*                      ls_line_csv-qualification
+*                      ls_line_csv-code_po
+*                      ls_line_csv-pays_origine
+*                      ls_line_csv-pa_net
+*                      ls_line_csv-pa_srp
+*                      ls_line_csv-nom_douaniere
+*                      ls_line_csv-tarif_integre
+*                      ls_line_csv-add1
+*                      ls_line_csv-add2
+*                      ls_line_csv-compl_nomenc
+*                      ls_line_csv-unite_de_vente INTO ls_csv_file SEPARATED BY ';'.
+*
+*          APPEND ls_csv_file TO gt_csv_file.
+*
+*
+*        ENDLOOP.
+
+
+    WHEN 'E1MARCM'.
+      ls_e1marcm = ls_data-sdata.
+      IF ( ls_e1marcm-herkl IS NOT INITIAL ).
+        SELECT SINGLE landx50
+          INTO @DATA(lv_t005)
+          FROM t005 AS t1 INNER JOIN t005t AS t2 ON t1~land1 = t2~land1
+          WHERE t1~land1 = @ls_e1marcm-herkl
+          AND   t2~spras = @sy-langu.
+        IF ( sy-subrc IS INITIAL ).
+          ls_line-code_po = ls_e1marcm-herkl.
+          ls_line-pays_origine = lv_t005.
+**Conversion du code pays SAP en code pays Phenix
+          SELECT SINGLE country_ext FROM zmm_phenix_count INTO ls_line-code_po
+          WHERE country_sap = ls_e1marcm-herkl.
+        ENDIF.
+      ENDIF.
+      IF NOT ls_e1marcm-stawn IS INITIAL.
+        ls_line-nom_douaniere = ls_e1marcm-stawn.
+      ENDIF.
+
+    WHEN : 'E1MTXLM' .
+      CLEAR lv_tabix.
+      lv_tabix = sy-tabix.
+      READ TABLE lt_data INTO DATA(ls_data_e1mtxhm) INDEX lv_tabix - 1.
+      IF sy-subrc = 0 AND ls_data_e1mtxhm-segnam = 'E1MTXHM'.
+        ls_e1mtxhm = ls_data_e1mtxhm-sdata.
+        ls_e1mtxlm = ls_data-sdata.
+        IF ls_e1mtxhm-tdid = 'GRUN' AND ls_e1mtxhm-tdspras = 'E'.
+          ls_line-designation_produit11 = ls_e1mtxlm-tdline.
+          ls_line-designation_produit21 = ls_line-designation_produit11.
+        ELSEIF ls_e1mtxhm-tdid = 'GRUN' AND ls_e1mtxhm-tdspras = 'F'.
+          ls_line-designation_produit12 = ls_e1mtxlm-tdline.
+        ENDIF.
+      ENDIF.
+    WHEN : 'E1MARAM'.
+      EXIT.
+  ENDCASE.
+ENDLOOP.
+
+ENDFORM.
+FORM idoc2csv_load_data USING lt_data TYPE zpiline_int014d_sapcadenci_tab.
+  DATA lt_lines TYPE zpiline_int014d_sapcadenci_tab.
+  DATA ls_line_csv TYPE zpiline_int014d_sapcadencier_lines.
+  DATA ls_csv_file      TYPE s_csv_file.
+  DATA l TYPE sy-tabix.
+  lt_lines = lt_data.
+  SORT lt_lines BY famille.
+  DESCRIBE TABLE lt_lines LINES l.
+  DELETE lt_lines INDEX l .
+  LOOP AT lt_lines INTO ls_line_csv.
+
+    CONCATENATE ls_line_csv-no_fournisseur
+                ls_line_csv-nom_fournisseur
+                ls_line_csv-nom_fournisseur_fabricant
+                ls_line_csv-rayon
+                ls_line_csv-famille
+                ls_line_csv-sous_famille
+                ls_line_csv-unite_de_besoin
+                ls_line_csv-pdt_supprime_nouveau
+                ls_line_csv-code_interne
+                ls_line_csv-ean13
+                ls_line_csv-ref_fournisseur
+                ls_line_csv-code_secteur
+                ls_line_csv-designation_produit11
+                ls_line_csv-designation_produit12
+                ls_line_csv-designation_produit13
+                ls_line_csv-taille1
+                ls_line_csv-couleur1
+                ls_line_csv-modele1
+                ls_line_csv-designation_produit21
+                ls_line_csv-designation_produit22
+                ls_line_csv-taille2
+                ls_line_csv-couleur2
+                ls_line_csv-sticker2
+                ls_line_csv-typologie
+                ls_line_csv-minimum_cde
+                ls_line_csv-unite_de_commande
+                ls_line_csv-pcb
+                ls_line_csv-nb_colis_couche
+                ls_line_csv-nb_colis_palette
+                ls_line_csv-contenance
+                ls_line_csv-unite_contenance
+                ls_line_csv-poids
+                ls_line_csv-unite_poids
+                ls_line_csv-poids_colis
+                ls_line_csv-volume_colis
+                ls_line_csv-dlcf
+                ls_line_csv-qualification
+                ls_line_csv-code_po
+                ls_line_csv-pays_origine
+                ls_line_csv-pa_net
+                ls_line_csv-pa_srp
+                ls_line_csv-nom_douaniere
+                ls_line_csv-tarif_integre
+                ls_line_csv-add1
+                ls_line_csv-add2
+                ls_line_csv-compl_nomenc
+                ls_line_csv-unite_de_vente INTO ls_csv_file SEPARATED BY ';'.
+
+    APPEND ls_csv_file TO gt_csv_file.
+
+
+  ENDLOOP.
+
+
+
+
+
+
+ENDFORM.
+FORM  idocdata2csv_init_total
+  CHANGING ls_output TYPE zpimtint014d_sapcadencier.
+
+  DATA : ls_total TYPE zpiline_int014d_sapcadencier_total.
+
+  ls_total-nc = 'NC'.
+  ls_total-no_cadencier = 'NO_CADENCIER'.
+  ls_total-date_heure_generation = 'DATE_HEURE_GENERATION'.
+  ls_total-no_magasin = 'NO_MAGASIN'.
+  ls_total-nom_magasin = 'NOM_MAGASIN'.
+  ls_total-total_lignes = 'TOTAL_LIGNES'.
+
+  APPEND ls_total TO ls_output-mtint014d_sapcadencier-total.
+
+ENDFORM.
+
+FORM idocdata2csv_load_total
+    USING lv_count_lines TYPE sy-tabix
+          ls_header TYPE zpiline_int014d_sapcadencier_header
+    CHANGING ls_output TYPE zpimtint014d_sapcadencier.
+
+  DATA : ls_total TYPE zpiline_int014d_sapcadencier_total.
+
+  MOVE-CORRESPONDING ls_header TO ls_total.
+  ls_total-total_lignes = lv_count_lines.
+
+  APPEND ls_total TO ls_output-mtint014d_sapcadencier-total.
+
+ENDFORM.
+
+FORM f_display_alv USING lt_data TYPE zpiline_int014d_sapcadenci_tab.
+  DATA l LIKE sy-tabix.
+*DATA wt_fieldcatalog TYPE slis_t_fieldcat_alv WITH HEADER LINE.
+* Mise en forme de la liste
+  PERFORM f_build_fieldcatalog.
+  DESCRIBE TABLE lt_data LINES l.
+  SORT lt_data BY famille.
+  DELETE lt_data INDEX l.
+*  DELETE lt_data INDEX 1.
+  CALL FUNCTION 'REUSE_ALV_GRID_DISPLAY'
+    EXPORTING
+      i_callback_program = sy-repid
+*     is_layout          = ws_layout
+      it_fieldcat        = gt_fieldcatalog[]
+*     it_sort            = wt_sort[]
+*     i_save             = 'X'
+*     i_callback_top_of_page = 'F900_TOP_OF_PAGE'
+    TABLES
+      t_outtab           = lt_data
+    EXCEPTIONS
+      OTHERS             = 1.
+
+ENDFORM.
+
+FORM f_send_email USING lt_data TYPE zpiline_int014d_sapcadenci_tab
+                        lt_header TYPE zpiline_int014d_sapcadenc_tab2
+                        lt_total TYPE zpiline_int014d_sapcadenc_tab1
+                        lv_email TYPE zsd_receivers
+                        lv_corps TYPE so_text255
+                        lv_obj   TYPE  so_obj_des
+                        lv_desc TYPE so_obj_des
+                        iv_csv_remove_double_quote "Jira 4937 (juil2021)
+                                TYPE abap_bool    "Jira 4937 (juil2021)
+                        it_corps TYPE soli_tab.
+
+  DATA: att_size      TYPE i,                             " att Size
+
+        att_itab_size TYPE i,                        " Attachment size
+        lv_nbr_dest   TYPE i,
+
+        mailtxt_size  TYPE i.                         " Text in mail size
+
+
+  DATA:
+
+    it_mailpack     LIKE sopcklsti1 OCCURS 0 WITH HEADER LINE, " Dist details
+
+    it_mailhead     LIKE solisti1   OCCURS  1 WITH HEADER LINE, " Header data
+
+    it_reclist      LIKE somlreci1 OCCURS 0 WITH HEADER LINE,   " Rec List
+
+    it_mailtxt      LIKE solisti1 OCCURS 0 WITH HEADER LINE,    " Mail Text
+
+*    it_att_data TYPE solix_tab," solisti1 OCCURS 0 WITH HEADER LINE,   " Attachment data
+    it_att_data     TYPE solisti1 OCCURS 0 WITH HEADER LINE,
+    it_att_data_new TYPE solisti1 OCCURS 0 WITH HEADER LINE,
+
+    it_doc_att      LIKE sodocchgi1.                          " Attri of new doc
+
+
+* Text in the mail
+
+*  it_mailtxt-line  = lv_corps.
+*  APPEND it_mailtxt.
+  LOOP AT it_corps ASSIGNING FIELD-SYMBOL(<fs_corps_mail>).
+    it_mailtxt-line  = <fs_corps_mail>-line.
+    APPEND it_mailtxt.
+  ENDLOOP.
+  DESCRIBE TABLE it_mailtxt LINES mailtxt_size.
+
+
+* Create the att File
+
+*concatenate 'Attachment Line Number 1' space into it_att_data-line.
+*
+*
+*APPEND it_att_data.
+*
+*concatenate 'Attachment Line Number 2' space into it_att_data-line.
+*
+*APPEND it_att_data.
+*
+*concatenate 'Attachment Line Number 3' space into it_att_data-line.
+*
+*APPEND it_att_data.
+  DATA : lv_string      TYPE string,   "s_csv_file, "string,
+         lv_new_line    TYPE abap_char1,
+         lv_new_colonne TYPE abap_char1,
+         lv_size        TYPE so_obj_len,
+         attach_xstring TYPE xstring,
+         lt_solix       TYPE solix_tab.
+
+
+  DATA:
+    strln         TYPE i,
+    l_offset_date TYPE i,
+    l_len         TYPE i.
+
+  DATA : l_asort TYPE asort.
+
+
+  DATA lt_attachment                   TYPE /iam/t_mail_attachment.
+  DATA ls_attachment                   LIKE LINE OF lt_attachment.
+  DATA lv_length                       TYPE i.
+  DATA lt_objbin1                      TYPE TABLE OF solix.
+  DATA lt_objbin                       TYPE TABLE OF solix.
+  DATA lv_count                        TYPE sy-tabix.
+  DATA l TYPE sy-tabix.
+
+**IZ-4642 : suppression des caractères ';' dans le contenu des différents champs de la ligne CSV
+  DATA : lv_field TYPE i.
+  FIELD-SYMBOLS <ls_csv_file_att> TYPE string.
+**Fin IZ-4642
+  lv_new_line = cl_abap_char_utilities=>cr_lf.   "newline .
+  lv_new_colonne = cl_abap_char_utilities=>horizontal_tab .
+
+* Entête-Fichier
+  CONCATENATE 'N/C'
+              'No cadencier'
+              'Date/Heure generation'
+              'No magasin'
+              'Nom magasin' INTO lv_string SEPARATED BY ';'.
+  PERFORM formatcsvline TABLES lt_attachment
+                        CHANGING lv_string.
+
+  LOOP AT lt_header INTO DATA(ls_csv_file_header) FROM 2.
+    CONCATENATE ls_csv_file_header-nc
+                ls_csv_file_header-no_cadencier
+                ls_csv_file_header-date_heure_generation
+                ls_csv_file_header-no_magasin
+                ls_csv_file_header-nom_magasin INTO lv_string SEPARATED BY ';'.
+
+    PERFORM formatcsvline TABLES lt_attachment
+                          CHANGING lv_string.
+  ENDLOOP.
+
+  CONCATENATE 'No fournisseur'
+              'Nom fournisseur'
+              'Nom fournisseur fabricant'
+              'Rayon'
+              'Famille'
+              'S Famille'
+              'Unite de besoin'
+              'Pdt supprime/nouveau'
+              'Code interne'
+              'EAN13'
+              'Ref. fournisseur'
+              'Code secteur'
+              'Designation produit 1'
+              'Designation produit 1'
+              'Designation produit 2'
+              'Taille'
+              'Couleur'
+              'Modele'
+              'Designation produit 1'
+              'Designation produit 2'
+              'Taille'
+              'Couleur'
+              'Sticker'
+              'Typologie'
+              'Minimum Cde'
+              'Unite de commande'
+              'PCB'
+              'Nb colis/couche'
+              'Nb colis/palette'
+              'Contenance'
+              'Unite Contenance'
+              'Poids'
+              'Unite Poids'
+              'Poids colis'
+              'Volume colis'
+              'DLCF'
+              'Qualification'
+              'Code PO'
+              'Pays origine'
+              'PA Net'
+              'PA SRP'
+              'Nomenc. douaniere'
+              'Tarif integre'
+              'Add1'
+              'Add2'
+              'Complement nomenc.'
+              'Unite de vente' INTO lv_string SEPARATED BY ';'.
+
+  PERFORM formatcsvline TABLES lt_attachment
+                        CHANGING lv_string.
+
+
+  SORT lt_data BY famille.
+  DESCRIBE TABLE lt_data LINES l.
+  DELETE lt_data INDEX l .
+
+
+
+
+
+
+  LOOP AT lt_data INTO DATA(ls_csv_file_att).
+    lv_count = lv_count + 1.
+
+*       CALL FUNCTION 'Z_REPLACE_SPECIFIC_CHAR'
+*    EXPORTING
+*      stringtoconvert = ls_csv_file_att-designation_produit12
+*    IMPORTING
+*      stringconverted = ls_csv_file_att-designation_produit12.
+
+**IZ-4642 : suppression des caractères ';' dans le contenu des différents champs de la ligne CSV
+
+    lv_field  = 2.
+    DO.
+      ASSIGN COMPONENT lv_field OF STRUCTURE ls_csv_file_att TO <ls_csv_file_att>.
+      IF sy-subrc = 0.
+        REPLACE ALL OCCURRENCES OF ';' IN <ls_csv_file_att> WITH ''.
+        IF iv_csv_remove_double_quote = 'X'.                          "Jira 4937 (juil2021)
+          REPLACE ALL OCCURRENCES OF '"' IN <ls_csv_file_att> WITH ''."Jira 4937 (juil2021)
+        ENDIF.                                                        "Jira 4937 (juil2021)
+        lv_field  = lv_field + 1.
+      ELSE.
+        EXIT.
+      ENDIF.
+    ENDDO.
+**Fin IZ-4642
+
+
+    CONCATENATE ls_csv_file_att-no_fournisseur
+                ls_csv_file_att-nom_fournisseur
+                ls_csv_file_att-nom_fournisseur_fabricant
+                ls_csv_file_att-rayon
+                ls_csv_file_att-famille
+                ls_csv_file_att-sous_famille
+                ls_csv_file_att-unite_de_besoin
+                ls_csv_file_att-pdt_supprime_nouveau
+                ls_csv_file_att-code_interne
+                ls_csv_file_att-ean13
+                ls_csv_file_att-ref_fournisseur
+                ls_csv_file_att-code_secteur
+                ls_csv_file_att-designation_produit11
+                ls_csv_file_att-designation_produit12
+                ls_csv_file_att-designation_produit13
+                ls_csv_file_att-taille1
+                ls_csv_file_att-couleur1
+                ls_csv_file_att-modele1
+                ls_csv_file_att-designation_produit21
+                ls_csv_file_att-designation_produit22
+                ls_csv_file_att-taille2
+                ls_csv_file_att-couleur2
+                ls_csv_file_att-sticker2
+                ls_csv_file_att-typologie
+                ls_csv_file_att-minimum_cde
+                ls_csv_file_att-unite_de_commande
+                ls_csv_file_att-pcb
+                ls_csv_file_att-nb_colis_couche
+                ls_csv_file_att-nb_colis_palette
+                ls_csv_file_att-contenance
+                ls_csv_file_att-unite_contenance
+                ls_csv_file_att-poids
+                ls_csv_file_att-unite_poids
+                ls_csv_file_att-poids_colis
+                ls_csv_file_att-volume_colis
+                ls_csv_file_att-dlcf
+                ls_csv_file_att-qualification
+                ls_csv_file_att-code_po
+                ls_csv_file_att-pays_origine
+                ls_csv_file_att-pa_net
+                ls_csv_file_att-pa_srp
+                ls_csv_file_att-nom_douaniere
+                ls_csv_file_att-tarif_integre
+                ls_csv_file_att-add1
+                ls_csv_file_att-add2
+                ls_csv_file_att-compl_nomenc
+                ls_csv_file_att-unite_de_vente INTO lv_string SEPARATED BY ';'.
+
+
+
+    PERFORM formatcsvline TABLES lt_attachment
+                          CHANGING lv_string.
+  ENDLOOP.
+
+  CONCATENATE 'N/C'
+              'No cadencier'
+              'Date/Heure generation'
+              'No magasin'
+              'Nom magasin'
+              'Nbre de lignes' INTO lv_string SEPARATED BY ';'.
+
+  PERFORM formatcsvline TABLES lt_attachment
+                      CHANGING lv_string.
+
+  LOOP AT lt_total INTO DATA(ls_csv_file_total) FROM 2.
+    ls_csv_file_total-total_lignes = lv_count.
+    CONCATENATE ls_csv_file_total-nc
+                ls_csv_file_total-no_cadencier
+                ls_csv_file_total-date_heure_generation
+                ls_csv_file_total-no_magasin
+                ls_csv_file_total-nom_magasin
+                ls_csv_file_total-total_lignes INTO lv_string SEPARATED BY ';'.
+
+
+    PERFORM formatcsvline TABLES lt_attachment
+                          CHANGING lv_string.
+  ENDLOOP.
+
+  LOOP AT lt_attachment INTO ls_attachment.
+
+    CLEAR lt_objbin1[].
+    CALL FUNCTION 'SCMS_XSTRING_TO_BINARY'
+      EXPORTING
+        buffer          = ls_attachment-content
+        append_to_table = abap_false
+      IMPORTING
+        output_length   = lv_length
+      TABLES
+        binary_tab      = lt_objbin1.
+    APPEND LINES OF lt_objbin1 TO lt_objbin.
+  ENDLOOP.
+  DESCRIBE TABLE lt_objbin1 LINES att_itab_size.
+
+* Attributes of new doc
+  CONCATENATE lv_obj '_' ls_csv_file_total-date_heure_generation '.txt' INTO it_doc_att-obj_descr.
+
+*it_doc_att-obj_descr = lv_obj.
+  it_doc_att-sensitivty = 'F'.
+  it_doc_att-doc_size   = mailtxt_size * 255.
+
+* Create Pack to text in mail body.
+  it_mailpack-head_start   = 1.
+  it_mailpack-head_num     = 0.
+  it_mailpack-body_start   = 1.
+  it_mailpack-body_num     = mailtxt_size.
+  it_mailpack-doc_type     = 'RAW'.
+  APPEND it_mailpack.
+
+* Create Pack for Attach.
+  it_mailpack-transf_bin   = 'X'.
+  it_mailpack-head_start   = 1.
+  it_mailpack-head_num     = 1.
+  it_mailpack-body_start   = 1.
+  it_mailpack-body_num     = att_itab_size.
+  it_mailpack-doc_type     = 'CSV'.
+  it_mailpack-doc_size     = lv_length.
+
+*  CONCATENATE lv_desc '_' ls_csv_file_total-date_heure_generation '.txt' INTO it_mailpack-obj_descr.
+  CONCATENATE lv_desc '_' ls_csv_file_total-date_heure_generation INTO it_mailpack-obj_descr.
+  APPEND it_mailpack.
+
+  LOOP AT lv_email INTO DATA(ls_email).
+    CLEAR it_reclist[].
+    it_reclist-receiver   = ls_email. "'zakaria.elyaakoubi@cgi.com'.  "lv_email
+    it_reclist-express    = 'X'.
+    it_reclist-rec_type   = 'U'.
+    it_reclist-notif_del  = 'X'. " request delivery notification
+    it_reclist-notif_ndel = 'X'. " request not delivered notification
+
+    APPEND it_reclist.
+
+* Call FM to send email
+    CALL FUNCTION 'SO_DOCUMENT_SEND_API1'
+      DESTINATION 'NONE'
+      EXPORTING
+        document_data              = it_doc_att     "subject
+        commit_work                = abap_true
+      TABLES
+        packing_list               = it_mailpack
+        object_header              = it_mailhead
+        contents_txt               = it_mailtxt     "mail body
+        contents_hex               = lt_objbin
+        receivers                  = it_reclist
+      EXCEPTIONS
+        too_many_receivers         = 1
+        document_not_sent          = 2
+        document_type_not_exist    = 3
+        operation_no_authorization = 4
+        parameter_error            = 5
+        x_error                    = 6
+        enqueue_error              = 7
+        OTHERS                     = 8.
+
+    IF sy-subrc <> 0.
+      MESSAGE ID sy-msgid
+        TYPE sy-msgty NUMBER sy-msgno
+        WITH sy-msgv1 sy-msgv2 sy-msgv3 sy-msgv4.
+    ENDIF.
+  ENDLOOP.
+  COMMIT WORK.
+
+ENDFORM.
+
+FORM f_build_fieldcatalog.
+
+  CLEAR gt_fieldcatalog.
+* * Mise en forme liste
+  CALL FUNCTION 'REUSE_ALV_FIELDCATALOG_MERGE'
+    EXPORTING
+      i_program_name         = sy-repid
+      i_structure_name       = 'ZPILINE_INT014D_SAPCADENCIER_L'
+      i_inclname             = sy-repid
+      i_client_never_display = 'X'
+    CHANGING
+      ct_fieldcat            = gt_fieldcatalog[]
+    EXCEPTIONS
+      inconsistent_interface = 1
+      program_error          = 2
+      OTHERS                 = 3.
+
+  IF sy-subrc <> 0.
+
+    MESSAGE i026(/sapapo/cif) WITH 'REUSE_ALV_FIELDCATALOG_MERGE' sy-subrc
+    DISPLAY LIKE 'E'.
+*   Error when calling function module &1: Error code &2
+
+  ENDIF.
+
+  LOOP AT gt_fieldcatalog ASSIGNING FIELD-SYMBOL(<wsl_fieldcat>).
+**   Par defaut :
+*    <wsl_fieldcat>-just   = 'C'. "C
+    IF <wsl_fieldcat>-fieldname = 'CODE_INTERNE'.
+      <wsl_fieldcat>-no_zero = 'X'.
+    ENDIF.
+**   Par Colonne
+
+    <wsl_fieldcat>-reptext_ddic = <wsl_fieldcat>-fieldname."'Designation de la colonne'.
+    <wsl_fieldcat>-seltext_l = <wsl_fieldcat>-fieldname."'Designation de la colonne'.
+    <wsl_fieldcat>-seltext_m = <wsl_fieldcat>-fieldname."'Designation de la colonne'.
+    <wsl_fieldcat>-seltext_s = <wsl_fieldcat>-fieldname."'Designation de la colonne'.
+
+  ENDLOOP.
+
+
+
+
+
+ENDFORM.
+
+FORM formatcsvline TABLES   lt_attachment TYPE /iam/t_mail_attachment
+                   CHANGING lv_csvline    TYPE string.
+
+  DATA : lv_newline           TYPE abap_char1.
+  DATA : ls_attachment        TYPE /iam/s_mail_attachment.
+  DATA : lv_length            TYPE i,
+         lv_converted_xstring TYPE xstring,
+         lv_new_xstring       TYPE xstring.
+
+
+*  CALL FUNCTION 'Z_REPLACE_SPECIFIC_CHAR'
+*    EXPORTING
+*      stringtoconvert = lv_csvline
+*    IMPORTING
+*      stringconverted = lv_csvline.
+
+  lv_newline = cl_abap_char_utilities=>newline.
+  CONCATENATE lv_csvline lv_newline INTO lv_csvline.
+
+  CALL FUNCTION 'SCMS_STRING_TO_XSTRING'
+    EXPORTING
+      text     = lv_csvline
+      mimetype = 'APPLICATION/MSEXCEL; charset=utf-16le'
+    IMPORTING
+      buffer   = lv_converted_xstring
+    EXCEPTIONS
+      failed   = 1
+      OTHERS   = 2.
+
+  IF ( lines( lt_attachment ) IS INITIAL ).
+    ls_attachment-desc    = 'TEST GPI'.
+    ls_attachment-type    = 'CSV'.
+    ls_attachment-content = lv_converted_xstring.
+    APPEND ls_attachment TO lt_attachment.
+  ELSE.
+    READ TABLE lt_attachment ASSIGNING FIELD-SYMBOL(<fs_attachment>) INDEX 1.
+    IF ( sy-subrc IS INITIAL ).
+      CONCATENATE <fs_attachment>-content lv_converted_xstring INTO lv_new_xstring IN BYTE MODE.
+      <fs_attachment>-content = lv_new_xstring.
+    ENDIF.
+  ENDIF.
+
+ENDFORM.
+*{INSERT - 27/08/2021
+*&---------------------------------------------------------------------*
+*&      Form  CONVERT_ITF_TO_ASCII
+*&---------------------------------------------------------------------*
+*   SAP remplace le caractère '&' que l'utilisateur saisit dans MM42 par
+*   '<(>&<)>'. Pour ça le standard appelle la fonction
+*   CONVERT_STREAM_TO_ITF_TEXT.
+*   Pour faire la transformation inverse, on appelle une autre fonction.
+*   On a trouvé cette fonction dans la note 277603 "idoc text segment:
+*   two consecutive comas ',,' are showed as ',<(>,<)>'
+*----------------------------------------------------------------------*
+FORM convert_itf_to_ascii CHANGING c_input TYPE csequence.
+* On fait ici comme la routine change_script_to_ascii du pgm
+* saplv56k
+  REPLACE ALL OCCURRENCES OF '<(>,<)>' IN c_input WITH ','.
+  REPLACE ALL OCCURRENCES OF '<(>><)>' IN c_input WITH '>'.
+  REPLACE ALL OCCURRENCES OF '<(><<)>' IN c_input WITH '<'.
+  REPLACE ALL OCCURRENCES OF '<(>&<)>' IN c_input WITH '&'.
+
+*  S'il y a encore des problèmes alors on pourra appeler la fonction
+*  'CONVERT_ITF_TO_ASCII'
+ENDFORM.
+*INSERT}
