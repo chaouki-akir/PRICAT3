@@ -51,7 +51,10 @@ FUNCTION zsd_masteridoc_pricat03.
 *&                                Désactivation envoi FTP INT014d
 *&                                Réf.: SAVANGY_IZ-5202
 *&---------------------------------------------------------------------*
-
+*& SAVANGY       | 27/12/2022   | IZ-5086:
+*&                                Ajout données FIA-fournisseurs
+*&                                (nv. segment ZFIAFOUR)
+*&---------------------------------------------------------------------*
 
   TYPES :
     BEGIN OF ls_unitofmeasureext,
@@ -75,7 +78,34 @@ FUNCTION zsd_masteridoc_pricat03.
       type_cond TYPE kschl,  "
     END OF ls_condvente.
 
+*** begin of SAVANGY IZ-5086 ++
+  TYPES:
+    BEGIN OF ty_eina,
+      infnr TYPE eina-infnr,
+      matnr TYPE eina-matnr,
+      lifnr TYPE eina-lifnr,
+      mfrnr TYPE eina-mfrnr,
+    END OF ty_eina,
 
+    BEGIN OF ty_lfa1,
+      lfinr TYPE lfa1-lifnr,
+      name1 TYPE lfa1-name1,
+      stras TYPE lfa1-stras,
+      pstlz TYPE lfa1-pstlz,
+      ort01 TYPE lfa1-ort01,
+      land1 TYPE lfa1-land1,
+    END OF ty_lfa1.
+
+  DATA:
+    ls_ze1fiafour TYPE ze1fiafour,
+    ls_lfa1       TYPE ty_lfa1,
+    ls_eina       TYPE ty_eina,
+
+    lt_eina       TYPE TABLE OF ty_eina,
+    lt_lifnr      TYPE TABLE OF ty_lfa1,
+    lt_lifnr_fab  TYPE TABLE OF ty_lfa1.
+
+*** end of SAVANGY IZ-5086 ++
 
   DATA :
     ls_idoc_contrl    TYPE edidc,
@@ -122,6 +152,9 @@ FUNCTION zsd_masteridoc_pricat03.
     ls_e1priausp      TYPE e1priausp,
     ls_ze1priausp     TYPE ze1priausp,
     ls_adresse        LIKE vbadr.
+
+
+
 
 **IZ-4645 : ajout d'un segment ZE1WBB13
   DATA : ls_ze1wbb13 TYPE ze1wbb13,
@@ -653,14 +686,14 @@ FUNCTION zsd_masteridoc_pricat03.
 
       IF lv_count_split = 1.
 *        lt_idoc_data_temp = lt_idoc_data_head.    "IZ-5141 -
-        lt_idoc_data_temp = lt_beforee1wsohm.      "IZ-5141 +
+        lt_idoc_data_temp = lt_beforee1wsohm.               "IZ-5141 +
       ENDIF.
 
 
 *      lv_countmatnr = lv_countmatnr + 1.
 *      IF ( lv_currentursac NE <fs_wsoh>-ursac ).   "IZ-5141 -
-      IF ( lv_currentursac NE <fs_wsoh>-ursac )     "IZ-5141 +
-      OR  lv_count_split = 1.                       "IZ-5141 +
+      IF ( lv_currentursac NE <fs_wsoh>-ursac )             "IZ-5141 +
+      OR  lv_count_split = 1.                               "IZ-5141 +
         lv_currentursac = <fs_wsoh>-ursac.
         lv_count_e1wsohm = lv_count_e1wsohm + 1.
 
@@ -910,6 +943,66 @@ FUNCTION zsd_masteridoc_pricat03.
             ENDLOOP.
           ENDIF.
 
+*** begin of SAVANGY IZ-5086 ++
+          "Données FIA-FOURNISSEUR
+          REFRESH lt_eina.
+          SELECT infnr matnr lifnr mfrnr
+            FROM eina INTO TABLE lt_eina
+            WHERE matnr = f_marakey-matnr.
+          IF sy-subrc = 0.
+
+            LOOP AT lt_eina INTO ls_eina.
+              CLEAR ls_ze1fiafour.
+              CLEAR ls_idoc_data.
+
+              ls_idoc_data-segnam = 'ZE1FIAFOUR'.
+
+              "Fournisseur FIA
+              ls_ze1fiafour-codefrsfia = ls_eina-lifnr.
+
+              SELECT SINGLE lifnr, name1
+                INTO @DATA(ls_lifnr)
+                FROM lfa1
+                WHERE lifnr = @ls_eina-lifnr.
+              IF sy-subrc = 0.
+                "Libellé fournisseur fIA
+                ls_ze1fiafour-libellefrsfia = ls_lifnr-name1.
+
+                "Dans le cas fournisseur FIA entrepôt
+                IF ls_eina-mfrnr IS NOT INITIAL.
+
+                  ls_ze1fiafour-codefrsfab = ls_eina-mfrnr.
+
+                  CALL FUNCTION 'CONVERSION_EXIT_ALPHA_INPUT'
+                    EXPORTING
+                      input  = ls_ze1fiafour-codefrsfab
+                    IMPORTING
+                      output = ls_ze1fiafour-codefrsfab.
+
+
+                  "Récupération données fournisseur fabricant
+                  SELECT SINGLE lifnr name1 stras pstlz ort01 land1
+                    INTO CORRESPONDING FIELDS OF ls_lfa1
+                    FROM lfa1
+                    WHERE lifnr = ls_ze1fiafour-codefrsfab.
+                  IF sy-subrc = 0.
+
+                    ls_ze1fiafour-libellefrsfab = ls_lfa1-name1.
+                    ls_ze1fiafour-ruefrsfab = ls_lfa1-stras.
+                    ls_ze1fiafour-codepostalfrsfab = ls_lfa1-pstlz.
+                    ls_ze1fiafour-villefrsfab = ls_lfa1-ort01.
+                    ls_ze1fiafour-paysfrsfab = ls_lfa1-land1.
+                  ENDIF.
+                ENDIF.
+
+                MOVE ls_ze1fiafour TO ls_idoc_data-sdata.
+                APPEND ls_idoc_data TO t_idoc_data.
+
+              ENDIF.
+            ENDLOOP.
+          ENDIF.
+*** end of SAVANGY IZ-5086 ++
+
 **AJOUT DE CARACTERISTIQUES COMPLEMENTAIRES (cf catalogue WEB CPI
 **PAYS D'ORIGINE
           CLEAR ls_e1priausp.
@@ -951,6 +1044,13 @@ FUNCTION zsd_masteridoc_pricat03.
               WHEN segm_27.
                 <fs_idoc_data_rich>-segnum = '100'.
                 <fs_idoc_data_rich>-hlevel = '03'.
+
+*** begin of SAVANGY IZ-5086 ++
+              WHEN 'ZE1FIAFOUR'.
+                <fs_idoc_data_rich>-segnum = '105'.
+                <fs_idoc_data_rich>-hlevel = '04'.
+*** end of SAVANGY IZ-5086 ++
+
 **              SEGMENT E1MARA1
               WHEN segm_271.
                 <fs_idoc_data_rich>-segnum = '110'.
@@ -1042,6 +1142,20 @@ FUNCTION zsd_masteridoc_pricat03.
                   lv_oksegm_8 = abap_false.
                   lv_oksegm_81 = abap_false.
                 ENDIF.
+*** begin of SAVANGY IZ-5086 ++
+**              SEGMENT ZE1FIAFOUR
+              WHEN 'ZE1FIAFOUR'.
+                MOVE <fs_idoc_data_mara>-sdata TO ls_ze1fiafour.
+                IF ls_ze1fiafour IS NOT INITIAL.
+                  lv_segnum = lv_segnum + 1.
+                  ls_idoc_data-segnum    = lv_segnum.
+                  ls_idoc_data-mandt     = sy-mandt.
+                  ls_idoc_data-segnam    = 'ZE1FIAFOUR'.
+                  MOVE ls_ze1fiafour TO ls_idoc_data-sdata.
+                  APPEND ls_idoc_data TO lt_idoc_data.
+                  APPEND ls_idoc_data TO lt_idoc_data_temp. "Split idoc
+                ENDIF.
+*** end of SAVANGY IZ-5086 ++
 
 **              SEGMENT E1MARA1
               WHEN segm_271.
