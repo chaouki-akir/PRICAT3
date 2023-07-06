@@ -55,6 +55,10 @@ FUNCTION zsd_masteridoc_pricat03.
 *&                                Ajout données FIA-fournisseurs
 *&                                (nv. segment ZFIAFOUR)
 *&---------------------------------------------------------------------*
+*& AKIRC         | 04/05/2023   | IZ-5576:
+*&                                EXW exclusion des conditions EXW
+*&
+*&---------------------------------------------------------------------*
 
   TYPES :
     BEGIN OF ls_unitofmeasureext,
@@ -1458,6 +1462,7 @@ FUNCTION zsd_masteridoc_pricat03.
                   WHERE matnr = f_marakey-matnr
                   AND kappl = 'V'
 *                        AND kschl = <fs_typecondition>-code
+                  AND kschl in gr_exclusion_cadenc  "IZ-5576 +
                   AND datbi >= sy-datum
                   AND datab <= sy-datum
 *                        AND vrkme = <fs_marmunit>-meinh
@@ -1469,6 +1474,7 @@ FUNCTION zsd_masteridoc_pricat03.
                   WHERE matnr = f_marakey-matnr
                   AND kappl = 'V'
 *                        AND kschl = <fs_typecondition>-code
+                  AND kschl in gr_exclusion_cadenc  "IZ-5576 +
                   AND datbi >= sy-datum
                   AND datab <= sy-datum
                   AND pltyp = lv_pltyp.
